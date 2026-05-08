@@ -272,7 +272,7 @@ router.get('/', verifyToken, async (req, res) => {
         ];
       }
     } else if (req.user.role === 'judge') {
-      query.status = { $in: ['filed', 'under-investigation', 'in-court', 'resolved'] };
+      query.assignedJudge = req.user.userId;
     }
 
     const cases = await Case.find(query)
