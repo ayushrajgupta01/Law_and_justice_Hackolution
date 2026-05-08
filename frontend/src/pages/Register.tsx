@@ -8,7 +8,7 @@ import {
   Mail, Lock, User, AlertCircle, Shield, 
   Phone, Fingerprint, Gavel, Briefcase, 
   CheckCircle2, ArrowRight, Sparkles,
-  Sun, Moon, Eye, MapPin
+  Sun, Moon, Eye, MapPin, LocateFixed
 } from 'lucide-react';
 
 const roles = [
@@ -32,15 +32,17 @@ export const Register: React.FC = () => {
   const [coords, setCoords] = useState<{lat: number, lng: number} | null>({ lat: 20.5937, lng: 78.9629 }); // Default to Center of India
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [role, setRole] = useState('citizen');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [fetchingLocation, setFetchingLocation] = useState(false);
   
-  const [searching, setSearching] = useState(false);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markerRef = useRef<maplibregl.Marker | null>(null);
-  const searchTimeout = useRef<NodeJS.Timeout | null>(null);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const [isPanning, setIsPanning] = useState(false);
 
@@ -139,7 +141,8 @@ export const Register: React.FC = () => {
 
   useEffect(() => {
     return () => {
-      if (searchTimeout.current) clearTimeout(searchTimeout.current);
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      if (abortControllerRef.current) abortControllerRef.current.abort();
     };
   }, []);
 
@@ -176,28 +179,30 @@ export const Register: React.FC = () => {
   const handleAddressChange = (val: string) => {
     setAddress(val);
     
-    if (searchTimeout.current) {
-      clearTimeout(searchTimeout.current);
-    }
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    if (abortControllerRef.current) abortControllerRef.current.abort();
 
-    if (val.trim().length > 2) {
-      setSearching(true);
+    if (val.trim().length > 0) {
+      setSuggestionsLoading(true);
       setShowSuggestions(true);
-      searchTimeout.current = setTimeout(async () => {
+      
+      searchTimeoutRef.current = setTimeout(async () => {
         try {
-          const baseUrl = 'https://nominatim.openstreetmap.org/search?format=json&countrycodes=in&addressdetails=1&limit=40';
+          abortControllerRef.current = new AbortController();
+          const baseUrl = 'https://nominatim.openstreetmap.org/search?format=json&countrycodes=in&addressdetails=1&limit=10';
           
           let query = val.toLowerCase();
           
-          if (role === 'police' && !query.includes('police') && !query.includes('thana') && !query.includes('chowki')) {
-            query = `${val} police thana chowki`;
-          } else if ((role === 'lawyer' || role === 'judge') && !query.includes('court') && !query.includes('nyayalaya')) {
-            query = `${val} court nyayalaya`;
-          } else {
-            query = val;
+          if (role === 'police' && !query.includes('police')) {
+            query = `${val} police station`;
+          } else if ((role === 'lawyer' || role === 'judge') && !query.includes('court')) {
+            query = `${val} court`;
           }
 
-          const res = await fetch(`${baseUrl}&q=${encodeURIComponent(query)}`);
+          const res = await fetch(`${baseUrl}&q=${encodeURIComponent(query)}`, {
+            signal: abortControllerRef.current.signal,
+            headers: { 'Accept-Language': 'en-US,en;q=0.5' }
+          });
           const data = await res.json();
           
           if (!Array.isArray(data)) {
@@ -205,60 +210,25 @@ export const Register: React.FC = () => {
             return;
           }
 
-          let filtered = data.filter((item: any) => {
-            if (role === 'citizen') return true;
-
-            const name = (item.display_name || '').toLowerCase();
-            const type = (item.type || '').toLowerCase();
-            const cls = (item.class || '').toLowerCase();
-            const addr = item.address || {};
-            const amenity = (addr.amenity || '').toLowerCase();
-            const office = (addr.office || '').toLowerCase();
-
-            if (role === 'police') {
-              return (
-                name.includes('police') || name.includes('thana') || name.includes('chowki') || 
-                name.includes('ps') || name.includes('p.s') || name.includes('outpost') ||
-                type.includes('police') || cls.includes('police') || 
-                amenity.includes('police') || type.includes('station')
-              );
-            }
-            if (role === 'lawyer' || role === 'judge') {
-              return (
-                name.includes('court') || name.includes('nyayalaya') || name.includes('kacheri') ||
-                name.includes('judic') || name.includes('legal') || name.includes('chamber') ||
-                type.includes('court') || cls.includes('amenity') || 
-                amenity.includes('court') || office.includes('court') || type.includes('justice')
-              );
-            }
-            return true;
-          });
-          
-          if (filtered.length === 0 && role !== 'citizen') {
-            const keywords = role === 'police' ? ['police', 'thana', 'chowki', 'ps'] : ['court', 'nyayalaya', 'legal'];
-            filtered = data.filter((item: any) => {
-              const dname = (item.display_name || '').toLowerCase();
-              return keywords.some(k => dname.includes(k));
-            });
+          setSuggestions(data.slice(0, 10));
+        } catch (e: any) {
+          if (e.name !== 'AbortError') {
+            console.error('Location search failed:', e);
+            setSuggestions([]);
           }
-
-          setSuggestions(filtered.slice(0, 10));
-        } catch (e) {
-          console.error('Location search failed:', e);
-          setSuggestions([]);
         } finally {
-          setSearching(false);
+          setSuggestionsLoading(false);
         }
-      }, 500);
+      }, 400);
     } else {
       setSuggestions([]);
       setShowSuggestions(false);
-      setSearching(false);
+      setSuggestionsLoading(false);
     }
   };
 
   const selectSuggestion = (s: any) => {
-    if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     setAddress(s.display_name);
     setCoords({ lat: parseFloat(s.lat), lng: parseFloat(s.lon) });
     setSuggestions([]);
@@ -290,6 +260,7 @@ export const Register: React.FC = () => {
       aadhaarNumber,
       badgeNumber,
       licenseNumber,
+      undefined, // courtAssignment removed
       specialization,
       address,
       coords?.lat,
@@ -462,6 +433,36 @@ export const Register: React.FC = () => {
               </div>
             </div>
 
+            {/* Auto-fetch Section for Citizens */}
+            {role === 'citizen' && (
+              <div className={`p-6 rounded-2xl border flex items-center justify-between group transition-all ${
+                theme === 'light' ? 'bg-white border-indigo-100' : 'bg-white/5 border-white/10 hover:border-indigo-500/30'
+              }`}>
+                <div className="flex items-center gap-4">
+                  <div className={`p-3 rounded-xl ${theme === 'light' ? 'bg-indigo-50 text-indigo-600' : 'bg-indigo-500/10 text-indigo-400'}`}>
+                    <Sparkles size={20} className="animate-pulse" />
+                  </div>
+                  <div>
+                    <h4 className={`text-[10px] font-black uppercase tracking-widest ${theme === 'light' ? 'text-indigo-900' : 'text-white'}`}>Auto-Fetch Location</h4>
+                    <p className="text-[9px] font-bold text-slate-500 uppercase mt-0.5">Sync with your current GPS coordinates</p>
+                  </div>
+                </div>
+                <button 
+                  type="button"
+                  onClick={handleCaptureLocation}
+                  disabled={fetchingLocation}
+                  className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black text-[9px] uppercase tracking-widest shadow-lg shadow-indigo-500/20 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {fetchingLocation ? (
+                    <>
+                      <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                      SYNCING...
+                    </>
+                  ) : 'Fetch Now'}
+                </button>
+              </div>
+            )}
+
             {/* Location Protocol - Map Integration */}
             <div className={`p-8 rounded-[2rem] border animate-in zoom-in-95 duration-500 ${
               theme === 'light' ? 'bg-indigo-50 border-indigo-100' : 'bg-indigo-600/5 border border-indigo-500/20'
@@ -490,10 +491,10 @@ export const Register: React.FC = () => {
                   <div className="absolute bottom-4 right-4 z-[1000] flex flex-col gap-2">
                     <button
                       type="button" onClick={handleCaptureLocation}
-                      className="p-3 bg-white text-indigo-600 rounded-xl shadow-2xl hover:bg-indigo-50 transition-all border border-indigo-100"
-                      title="Auto-detect Location"
+                      className="p-3 bg-white text-indigo-600 rounded-xl shadow-2xl hover:bg-indigo-50 transition-all border border-indigo-100 flex items-center justify-center"
+                      title="Locate Me (GPS)"
                     >
-                      <Sparkles size={18}/>
+                      <LocateFixed size={20}/>
                     </button>
                   </div>
                 </div>
@@ -510,24 +511,28 @@ export const Register: React.FC = () => {
                         theme === 'light' ? 'bg-white border-slate-200 text-slate-900 focus:bg-white focus:border-indigo-600' : 
                         'bg-[#070b14] border-white/10 text-white focus:bg-white/10 focus:border-indigo-500'
                       }`}
-                      placeholder="SEARCH OR PAN MAP TO LOCATE..."
-                      onFocus={() => { if(address.length > 2) setShowSuggestions(true); }}
+                      placeholder="SEARCH OR DROP PIN ON MAP..."
+                      onFocus={() => { if(address.length > 0) setShowSuggestions(true); }}
+                      onBlur={() => setTimeout(() => setShowSuggestions(false), 300)}
                     />
 
                     {/* Suggestions Dropdown */}
-                    {showSuggestions && (searching || suggestions.length > 0 || (address.length > 2 && !searching && suggestions.length === 0)) && (
-                      <div className="absolute z-[110] left-0 right-0 top-full mt-1 rounded-2xl border shadow-2xl overflow-hidden max-h-60 overflow-y-auto bg-inherit">
-                        {searching ? (
-                          <div className={`px-6 py-8 text-center ${theme === 'light' ? 'bg-white' : 'bg-[#0f172a]'}`}>
-                            <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
-                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Scanning Judicial Network...</p>
+                    {showSuggestions && (suggestionsLoading || suggestions.length > 0 || (address.length > 2 && !suggestionsLoading && suggestions.length === 0)) && (
+                      <div className={`absolute z-[110] left-0 right-0 top-full mt-2 rounded-2xl border shadow-2xl overflow-hidden max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-300 ${
+                        theme === 'light' ? 'bg-white border-slate-200 shadow-slate-200/50' : 'bg-[#0f172a] border-white/10 shadow-black/50'
+                      }`}>
+                        {suggestionsLoading ? (
+                          <div className="px-6 py-8 text-center space-y-3">
+                            <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 animate-pulse">Scanning Judicial Network...</p>
                           </div>
                         ) : suggestions.length > 0 ? (
                           suggestions.map((s, idx) => (
                             <button
-                              key={idx} type="button" onClick={() => selectSuggestion(s)}
+                              key={idx} type="button" 
+                              onMouseDown={(e) => { e.preventDefault(); selectSuggestion(s); }}
                               className={`w-full px-6 py-4 text-left transition-colors border-b last:border-b-0 ${
-                                theme === 'light' ? 'bg-white hover:bg-slate-50 border-slate-100 text-slate-700' : 'bg-[#0f172a] hover:bg-white/5 border-white/5 text-slate-300'
+                                theme === 'light' ? 'hover:bg-indigo-50 border-slate-100 text-slate-700' : 'hover:bg-indigo-600/10 border-white/5 text-slate-300'
                               }`}
                             >
                               <div className="flex items-start gap-3">
@@ -536,10 +541,10 @@ export const Register: React.FC = () => {
                               </div>
                             </button>
                           ))
-                        ) : (
-                          <div className={`px-6 py-8 text-center ${theme === 'light' ? 'bg-white' : 'bg-[#0f172a]'}`}>
-                            <AlertCircle size={20} className="mx-auto mb-2 text-orange-500" />
-                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">No authorized nodes found</p>
+                        ) : address.length > 0 && (
+                          <div className="px-6 py-8 text-center space-y-2">
+                            <AlertCircle size={20} className="mx-auto text-orange-500" />
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">No matching nodes found in India</p>
                           </div>
                         )}
                       </div>
@@ -604,7 +609,8 @@ export const Register: React.FC = () => {
                           <option value="corporate">Corporate Law</option>
                           <option value="commercial">Commercial Law</option>
                           <option value="property">Property Law</option>
-                          <option value="general">General Practice</option>                        </select>
+                          <option value="general">General Practice</option>
+                        </select>
                       </div>
                     </div>
                   )}

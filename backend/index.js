@@ -125,14 +125,22 @@ cron.schedule('0 0 * * *', async () => {
 
     for (const c of criticalCases) {
       const daysLeft = Math.ceil((new Date(c.deadlineDate) - today) / (1000 * 60 * 60 * 24));
-      const message = `URGENT: Case #${c.caseNumber} deadline is approaching! Only ${daysLeft} days remaining.`;
+      const message = `BNSS STATUTORY ALERT: Case #${c.caseNumber} ("${c.title}") is approaching its legal resolution limit. Only ${daysLeft} days remaining.`;
 
-      if (c.assignedLawyer) {
-        await new Notification({ recipient: c.assignedLawyer, message, type: 'warning', caseId: c._id }).save();
-      }
+      const recipients = [
+        c.filedBy,          // The Citizen
+        c.assignedLawyer,   // The Advocate
+        c.assignedPolice,   // The IO / Police
+        c.assignedJudge     // The Judge
+      ].filter(id => id); // Remove null/undefined
 
-      if (c.assignedPolice) {
-        await new Notification({ recipient: c.assignedPolice, message, type: 'warning', caseId: c._id }).save();
+      for (const recipientId of recipients) {
+        await new Notification({ 
+          recipient: recipientId, 
+          message, 
+          type: 'warning', 
+          caseId: c._id 
+        }).save();
       }
     }
     console.log(`Sent deadline alerts for ${criticalCases.length} cases.`);
