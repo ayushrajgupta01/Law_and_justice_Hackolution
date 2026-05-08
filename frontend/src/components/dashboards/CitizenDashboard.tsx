@@ -406,7 +406,18 @@ export const CitizenDashboard: React.FC = () => {
               </div>
             ) : (
               cases.map((caseItem) => (
-                <div key={caseItem._id} className={`backdrop-blur-xl rounded-[3rem] border transition-all duration-700 overflow-hidden ${theme === 'light' ? 'bg-white border-slate-200 shadow-sm' : theme === 'high-contrast' ? 'bg-zinc-900 border-white' : 'bg-white/5 border-white/10'}`}>
+                <div key={caseItem._id} className={`backdrop-blur-xl rounded-[3rem] border transition-all duration-700 overflow-hidden relative group ${theme === 'light' ? 'bg-white border-slate-200 shadow-sm' : theme === 'high-contrast' ? 'bg-zinc-900 border-white' : 'bg-white/5 border-white/10'}`}>
+                  {/* Floating Corner Deadline Badge */}
+                  <div className="absolute top-10 right-28 flex flex-col items-end gap-1">
+                    <div className="px-3 py-1 bg-amber-500/10 border border-amber-500/20 rounded-full flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse"></div>
+                      <span className="text-[9px] font-black text-amber-500 uppercase tracking-widest">
+                        {Math.ceil((new Date(caseItem.deadlineDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))}D LEFT
+                      </span>
+                    </div>
+                    <p className="text-[7px] font-black text-slate-500 uppercase tracking-[0.2em]">BNS STATUTORY LIMIT</p>
+                  </div>
+
                   <div className="p-8 lg:p-12 space-y-10">
                     <div className="flex flex-col md:flex-row justify-between items-start gap-6">
                       <div>
@@ -414,9 +425,12 @@ export const CitizenDashboard: React.FC = () => {
                           <h3 className={`text-2xl font-black tracking-tighter uppercase transition-colors ${theme === 'light' ? 'text-slate-900' : 'text-white'}`}>{caseItem.title}</h3>
                           <span className="px-3 py-1 bg-white/5 rounded-full border border-white/10 text-[10px] font-black text-indigo-400 uppercase tracking-widest">ID: {caseItem.caseNumber}</span>
                         </div>
-                        <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Filed On: {new Date(caseItem.createdAt).toLocaleDateString()}</p>
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Filed On: {new Date(caseItem.createdAt).toLocaleDateString()}</p>
+                          <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400/60">Target Date: {new Date(caseItem.deadlineDate).toLocaleDateString()}</p>
+                        </div>
                       </div>
-                      <button onClick={() => navigate(`/case/${caseItem._id}`)} className={`p-5 rounded-3xl border transition-all duration-500 ${theme === 'light' ? 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-indigo-600 hover:text-white' : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white hover:text-slate-950'}`}><ChevronRight size={24}/></button>
+                      <button onClick={() => navigate(`/case/${caseItem._id}`)} className={`p-5 rounded-3xl border transition-all duration-500 mr-12 md:mr-0 ${theme === 'light' ? 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-indigo-600 hover:text-white' : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white hover:text-slate-950'}`}><ChevronRight size={24}/></button>
                     </div>
 
                     {/* INTERESTED LAWYERS SECTION */}
