@@ -23,7 +23,6 @@ interface AuthContextType {
     aadhaarNumber: string,
     badgeNumber?: string,
     licenseNumber?: string,
-    courtAssignment?: string,
     specialization?: string,
     address?: string,
     lat?: number,
@@ -75,17 +74,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       throw new Error(error.message || 'Network error occurred. Is the backend running?');
     }
   }, []);
-
-  const register = useCallback(async (
-    email: string, 
-    password: string, 
-    fullName: string, 
-    role: string,
-    phone: string,
+const register = useCallback(async (
+  email: string, 
+  password: string, 
+  fullName: string, 
+  role: string,
+  phone: string,
     aadhaarNumber: string,
     badgeNumber?: string,
     licenseNumber?: string,
-    courtAssignment?: string,
     specialization?: string,
     address?: string,
     lat?: number,
@@ -105,7 +102,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           aadhaarNumber,
           badgeNumber,
           licenseNumber,
-          courtAssignment,
           specialization,
           address,
           lat,

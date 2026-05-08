@@ -8,13 +8,22 @@ const router = express.Router();
 router.post('/register', async (req, res) => {
   try {
     const { 
-      email, password, fullName, role, 
-      phone, aadhaarNumber, badgeNumber, licenseNumber, courtAssignment,
-      specialization, address, lat, lng
+      email, 
+      password, 
+      fullName, 
+      role, 
+      phone, 
+      aadhaarNumber, 
+      badgeNumber, 
+      licenseNumber, 
+      specialization,
+      address,
+      lat,
+      lng
     } = req.body;
 
-    if (!email || !password || !fullName || !role || !phone || !aadhaarNumber) {
-      return res.status(400).json({ message: 'Mandatory fields (Email, Password, Name, Role, Phone, Aadhaar) are required' });
+    if (!email || !password || !fullName || !role || !phone || !aadhaarNumber || !address) {
+      return res.status(400).json({ message: 'Mandatory fields (Email, Password, Name, Role, Phone, Aadhaar, Address) are required' });
     }
 
     // Role-specific mandatory fields
@@ -26,9 +35,6 @@ router.post('/register', async (req, res) => {
     }
     if (role === 'lawyer' && !specialization) {
       return res.status(400).json({ message: 'Lawyer specialization is required' });
-    }
-    if (role === 'judge' && !courtAssignment) {
-      return res.status(400).json({ message: 'Court assignment is required for Judges' });
     }
 
     const existingUser = await User.findOne({ email });
@@ -47,7 +53,6 @@ router.post('/register', async (req, res) => {
       aadhaarNumber,
       badgeNumber,
       licenseNumber,
-      courtAssignment,
       specialization: specialization || null,
       address,
       lat,

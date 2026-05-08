@@ -25,10 +25,11 @@ export const Register: React.FC = () => {
   const [aadhaarNumber, setAadhaarNumber] = useState('');
   const [badgeNumber, setBadgeNumber] = useState('');
   const [licenseNumber, setLicenseNumber] = useState('');
-  const [courtAssignment, setCourtAssignment] = useState('');
   const [specialization, setSpecialization] = useState('');
   const [address, setAddress] = useState('');
   const [coords, setCoords] = useState<{lat: number, lng: number} | null>(null);
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [role, setRole] = useState('citizen');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -53,6 +54,46 @@ export const Register: React.FC = () => {
     }
   };
 
+  const handleAddressChange = async (val: string) => {
+    setAddress(val);
+    if (val.length > 2) {
+      try {
+        const baseUrl = 'https://nominatim.openstreetmap.org/search?format=json&countrycodes=in&addressdetails=1&limit=5';
+        let specificQuery = '';
+        
+        if (role === 'police') specificQuery = `${val} police station`;
+        else if (role === 'lawyer' || role === 'judge') specificQuery = `${val} court`;
+
+        const requests = [fetch(`${baseUrl}&q=${encodeURIComponent(val)}`)];
+        if (specificQuery) {
+          requests.unshift(fetch(`${baseUrl}&q=${encodeURIComponent(specificQuery)}`));
+        }
+
+        const responses = await Promise.all(requests);
+        const results = await Promise.all(responses.map(r => r.json()));
+        
+        // Flatten and deduplicate by place_id
+        const combined = results.flat();
+        const unique = Array.from(new Map(combined.map(item => [item.place_id, item])).values());
+        
+        setSuggestions(unique);
+        setShowSuggestions(true);
+      } catch (e) {
+        setSuggestions([]);
+      }
+    } else {
+      setSuggestions([]);
+      setShowSuggestions(false);
+    }
+  };
+
+  const selectSuggestion = (s: any) => {
+    setAddress(s.display_name);
+    setCoords({ lat: parseFloat(s.lat), lng: parseFloat(s.lon) });
+    setSuggestions([]);
+    setShowSuggestions(false);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -73,7 +114,7 @@ export const Register: React.FC = () => {
       aadhaarNumber,
       badgeNumber,
       licenseNumber,
-      courtAssignment,
+      undefined, // courtAssignment removed
       specialization,
       address,
       coords?.lat,
@@ -246,8 +287,80 @@ export const Register: React.FC = () => {
               </div>
             </div>
 
-            {/* Dynamic Credentials */}
-            {(role === 'police' || role === 'lawyer' || role === 'judge') && (
+            {/* Location Protocol - For All Roles */}
+            <div className={`p-8 rounded-[2rem] border animate-in zoom-in-95 duration-500 ${
+              theme === 'light' ? 'bg-indigo-50 border-indigo-100' : 'bg-indigo-600/5 border border-indigo-500/20'
+            }`}>
+              <div className="flex items-center gap-3 mb-6">
+                <MapPin size={16} className="text-indigo-500" />
+                <span className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.3em]">Geospatial & Address Protocol</span>
+              </div>
+              
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Detection Method</label>
+                    <button
+                      type="button" onClick={handleCaptureLocation}
+                      className={`w-full px-6 py-4 border rounded-2xl outline-none font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-3 transition-all ${
+                        coords 
+                          ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' 
+                          : (theme === 'light' ? 'bg-white border-slate-200 text-indigo-600 hover:border-indigo-600' : 'bg-[#070b14] border-white/10 text-indigo-400 hover:border-indigo-500')
+                      }`}
+                    >
+                      {coords ? <CheckCircle2 size={16}/> : <Sparkles size={16}/>}
+                      {coords ? 'LOCATION SECURED' : 'AUTO-DETECT LOCATION'}
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Manual Node Entry</label>
+                    <div className="relative group">
+                      <MapPin className={`absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 transition-colors ${
+                        theme === 'light' ? 'text-slate-400 group-focus-within:text-indigo-600' : 'text-slate-600 group-focus-within:text-indigo-500'
+                      }`} />
+                      <input
+                        type="text" value={address} onChange={(e) => handleAddressChange(e.target.value)} required
+                        className={`w-full pl-10 pr-4 py-4 border rounded-2xl outline-none font-bold text-xs uppercase tracking-widest ${
+                          theme === 'light' ? 'bg-white border-slate-200 text-slate-900 focus:bg-white focus:border-indigo-600' : 
+                          'bg-[#070b14] border-white/10 text-white focus:bg-white/10 focus:border-indigo-500'
+                        }`}
+                        placeholder={role === 'police' ? 'STATION ADDRESS' : role === 'judge' ? 'COURT ADDRESS' : role === 'lawyer' ? 'OFFICE ADDRESS' : 'RESIDENTIAL ADDRESS'}
+                        onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+                        onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                      />
+
+                      {/* Suggestions Dropdown */}
+                      {showSuggestions && suggestions.length > 0 && (
+                        <div className={`absolute z-[100] left-0 right-0 top-full mt-2 rounded-2xl border shadow-2xl overflow-hidden max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-300 ${
+                          theme === 'light' ? 'bg-white border-slate-200 shadow-slate-200/50' : 'bg-[#0f172a] border-white/10 shadow-black/50'
+                        }`}>
+                          {suggestions.map((s, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => selectSuggestion(s)}
+                              className={`w-full px-6 py-4 text-left transition-colors border-b last:border-b-0 ${
+                                theme === 'light' 
+                                  ? 'hover:bg-indigo-50 border-slate-100 text-slate-700' 
+                                  : 'hover:bg-indigo-600/10 border-white/5 text-slate-300'
+                              }`}
+                            >
+                              <div className="flex items-start gap-3">
+                                <MapPin size={14} className="mt-0.5 shrink-0 text-indigo-500" />
+                                <span className="font-bold text-[10px] uppercase tracking-wider">{s.display_name}</span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Dynamic Credentials - Official Verification for Police/Lawyers */}
+            {(role === 'police' || role === 'lawyer') && (
               <div className={`p-8 rounded-[2rem] border animate-in zoom-in-95 duration-500 ${
                 theme === 'light' ? 'bg-indigo-50 border-indigo-100' : 'bg-indigo-600/5 border border-indigo-500/20'
               }`}>
@@ -258,49 +371,19 @@ export const Register: React.FC = () => {
                 
                 <div className="space-y-6">
                   {role === 'police' && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Badge Number</label>
-                        <input
-                          type="text" value={badgeNumber} onChange={(e) => setBadgeNumber(e.target.value)} required
-                          className={`w-full px-6 py-4 border rounded-2xl outline-none font-bold text-sm uppercase tracking-widest ${
-                            theme === 'light' ? 'bg-white border-slate-200 text-slate-900 focus:border-indigo-600' : 
-                            'bg-[#070b14] border-white/10 text-white focus:border-indigo-500'
-                          }`}
-                          placeholder="POL-00000"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Station Coordinates</label>
-                        <button
-                          type="button" onClick={handleCaptureLocation}
-                          className={`w-full px-6 py-4 border rounded-2xl outline-none font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-3 transition-all ${
-                            coords 
-                              ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' 
-                              : (theme === 'light' ? 'bg-white border-slate-200 text-indigo-600 hover:border-indigo-600' : 'bg-[#070b14] border-white/10 text-indigo-400 hover:border-indigo-500')
-                          }`}
-                        >
-                          {coords ? <CheckCircle2 size={16}/> : <MapPin size={16}/>}
-                          {coords ? 'LOCATION SECURED' : 'CAPTURE STATION GPS'}
-                        </button>
-                      </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Badge Number</label>
+                      <input
+                        type="text" value={badgeNumber} onChange={(e) => setBadgeNumber(e.target.value)} required
+                        className={`w-full px-6 py-4 border rounded-2xl outline-none font-bold text-sm uppercase tracking-widest ${
+                          theme === 'light' ? 'bg-white border-slate-200 text-slate-900 focus:border-indigo-600' : 
+                          'bg-[#070b14] border-white/10 text-white focus:border-indigo-500'
+                        }`}
+                        placeholder="POL-00000"
+                      />
                     </div>
                   )}
                   
-                  {/* Shared Address/Station Field for all Official Roles */}
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">
-                      {role === 'police' ? 'Station Address' : role === 'judge' ? 'Chambers/Court Address' : 'Office Address'}
-                    </label>
-                    <input
-                      type="text" value={address} onChange={(e) => setAddress(e.target.value)} required
-                      className={`w-full px-6 py-4 border rounded-2xl outline-none font-bold text-sm uppercase tracking-widest ${
-                        theme === 'light' ? 'bg-white border-slate-200 text-slate-900 focus:border-indigo-600' : 
-                        'bg-[#070b14] border-white/10 text-white focus:border-indigo-500'
-                      }`}
-                      placeholder="ENTER FULL PHYSICAL ADDRESS"
-                    />
-                  </div>
                   {role === 'lawyer' && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                       <div className="space-y-2">
@@ -333,19 +416,6 @@ export const Register: React.FC = () => {
                           <option value="property">Property Law</option>
                           <option value="general">General Practice</option>                        </select>
                       </div>
-                    </div>
-                  )}
-                  {role === 'judge' && (
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Court Assignment Node</label>
-                      <input
-                        type="text" value={courtAssignment} onChange={(e) => setCourtAssignment(e.target.value)} required
-                        className={`w-full px-6 py-4 border rounded-2xl outline-none font-bold text-sm uppercase tracking-wider ${
-                          theme === 'light' ? 'bg-white border-slate-200 text-slate-900 focus:border-indigo-600' : 
-                          'bg-[#070b14] border-white/10 text-white focus:border-indigo-500'
-                        }`}
-                        placeholder="E.G. HIGH COURT KARNATAKA"
-                      />
                     </div>
                   )}
                 </div>
