@@ -8,7 +8,7 @@ import {
   Mail, Lock, User, AlertCircle, Shield, 
   Phone, Fingerprint, Gavel, Briefcase, 
   CheckCircle2, ArrowRight, Sparkles,
-  Sun, Moon, Eye, MapPin
+  Sun, Moon, Eye, MapPin, LocateFixed
 } from 'lucide-react';
 
 const roles = [
@@ -32,15 +32,16 @@ export const Register: React.FC = () => {
   const [coords, setCoords] = useState<{lat: number, lng: number} | null>({ lat: 20.5937, lng: 78.9629 }); // Default to Center of India
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [role, setRole] = useState('citizen');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   
-  const [searching, setSearching] = useState(false);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markerRef = useRef<maplibregl.Marker | null>(null);
-  const searchTimeout = useRef<NodeJS.Timeout | null>(null);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const [isPanning, setIsPanning] = useState(false);
 
@@ -104,6 +105,38 @@ export const Register: React.FC = () => {
       }
     });
 
+    //  const geolocate = new maplibregl.GeolocateControl({
+    //    83   positionOptions: {
+    //    84     enableHighAccuracy: true
+    //    85 },
+    //    86    trackUserLocation: false, // Don't follow them automatically, just point
+    //    87    showUserHeading: true,
+    //    88    showAccuracyCircle: true
+    //    89  });
+    //    90  
+    //    91  mapRef.current.addControl(geolocate, 'top-right');
+    //    92  
+    //    93  geolocate.on('geolocate', (e: any) => {
+    //    94    const { latitude, longitude } = e.coords;
+    //    95    handleMapLocationSelect(latitude, longitude);
+    //    96  });
+    //    97 
+    const geolocate = new maplibregl.GeolocateControl({
+      posiionOptions: {
+        enableHighAccuracy: true
+      },
+      trackUserLocation: false, // Don't follow them automatically, just point
+      showUserHeading: true,
+      showAccuracyCircle: true
+    });
+
+    mapRef.current.addControl(geolocate, 'top-right');
+
+    geolocate.on('geolocate', (e: any) => {
+      const { latitude, longitude } = e.coords;
+      handleMapLocationSelect(latitude, longitude);
+    });
+
     mapRef.current.on('click', (e) => {
       mapRef.current?.flyTo({ center: e.lngLat, zoom: 15 });
     });
@@ -139,7 +172,8 @@ export const Register: React.FC = () => {
 
   useEffect(() => {
     return () => {
-      if (searchTimeout.current) clearTimeout(searchTimeout.current);
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      if (abortControllerRef.current) abortControllerRef.current.abort();
     };
   }, []);
 
@@ -176,28 +210,30 @@ export const Register: React.FC = () => {
   const handleAddressChange = (val: string) => {
     setAddress(val);
     
-    if (searchTimeout.current) {
-      clearTimeout(searchTimeout.current);
-    }
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    if (abortControllerRef.current) abortControllerRef.current.abort();
 
-    if (val.trim().length > 2) {
-      setSearching(true);
+    if (val.trim().length > 0) {
+      setSuggestionsLoading(true);
       setShowSuggestions(true);
-      searchTimeout.current = setTimeout(async () => {
+      
+      searchTimeoutRef.current = setTimeout(async () => {
         try {
-          const baseUrl = 'https://nominatim.openstreetmap.org/search?format=json&countrycodes=in&addressdetails=1&limit=40';
+          abortControllerRef.current = new AbortController();
+          const baseUrl = 'https://nominatim.openstreetmap.org/search?format=json&countrycodes=in&addressdetails=1&limit=10';
           
           let query = val.toLowerCase();
           
-          if (role === 'police' && !query.includes('police') && !query.includes('thana') && !query.includes('chowki')) {
-            query = `${val} police thana chowki`;
-          } else if ((role === 'lawyer' || role === 'judge') && !query.includes('court') && !query.includes('nyayalaya')) {
-            query = `${val} court nyayalaya`;
-          } else {
-            query = val;
+          if (role === 'police' && !query.includes('police')) {
+            query = `${val} police station`;
+          } else if ((role === 'lawyer' || role === 'judge') && !query.includes('court')) {
+            query = `${val} court`;
           }
 
-          const res = await fetch(`${baseUrl}&q=${encodeURIComponent(query)}`);
+          const res = await fetch(`${baseUrl}&q=${encodeURIComponent(query)}`, {
+            signal: abortControllerRef.current.signal,
+            headers: { 'Accept-Language': 'en-US,en;q=0.5' }
+          });
           const data = await res.json();
           
           if (!Array.isArray(data)) {
@@ -205,60 +241,25 @@ export const Register: React.FC = () => {
             return;
           }
 
-          let filtered = data.filter((item: any) => {
-            if (role === 'citizen') return true;
-
-            const name = (item.display_name || '').toLowerCase();
-            const type = (item.type || '').toLowerCase();
-            const cls = (item.class || '').toLowerCase();
-            const addr = item.address || {};
-            const amenity = (addr.amenity || '').toLowerCase();
-            const office = (addr.office || '').toLowerCase();
-
-            if (role === 'police') {
-              return (
-                name.includes('police') || name.includes('thana') || name.includes('chowki') || 
-                name.includes('ps') || name.includes('p.s') || name.includes('outpost') ||
-                type.includes('police') || cls.includes('police') || 
-                amenity.includes('police') || type.includes('station')
-              );
-            }
-            if (role === 'lawyer' || role === 'judge') {
-              return (
-                name.includes('court') || name.includes('nyayalaya') || name.includes('kacheri') ||
-                name.includes('judic') || name.includes('legal') || name.includes('chamber') ||
-                type.includes('court') || cls.includes('amenity') || 
-                amenity.includes('court') || office.includes('court') || type.includes('justice')
-              );
-            }
-            return true;
-          });
-          
-          if (filtered.length === 0 && role !== 'citizen') {
-            const keywords = role === 'police' ? ['police', 'thana', 'chowki', 'ps'] : ['court', 'nyayalaya', 'legal'];
-            filtered = data.filter((item: any) => {
-              const dname = (item.display_name || '').toLowerCase();
-              return keywords.some(k => dname.includes(k));
-            });
+          setSuggestions(data.slice(0, 10));
+        } catch (e: any) {
+          if (e.name !== 'AbortError') {
+            console.error('Location search failed:', e);
+            setSuggestions([]);
           }
-
-          setSuggestions(filtered.slice(0, 10));
-        } catch (e) {
-          console.error('Location search failed:', e);
-          setSuggestions([]);
         } finally {
-          setSearching(false);
+          setSuggestionsLoading(false);
         }
-      }, 500);
+      }, 400);
     } else {
       setSuggestions([]);
       setShowSuggestions(false);
-      setSearching(false);
+      setSuggestionsLoading(false);
     }
   };
 
   const selectSuggestion = (s: any) => {
-    if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     setAddress(s.display_name);
     setCoords({ lat: parseFloat(s.lat), lng: parseFloat(s.lon) });
     setSuggestions([]);
@@ -290,6 +291,7 @@ export const Register: React.FC = () => {
       aadhaarNumber,
       badgeNumber,
       licenseNumber,
+      undefined, // courtAssignment removed
       specialization,
       address,
       coords?.lat,
@@ -490,10 +492,10 @@ export const Register: React.FC = () => {
                   <div className="absolute bottom-4 right-4 z-[1000] flex flex-col gap-2">
                     <button
                       type="button" onClick={handleCaptureLocation}
-                      className="p-3 bg-white text-indigo-600 rounded-xl shadow-2xl hover:bg-indigo-50 transition-all border border-indigo-100"
-                      title="Auto-detect Location"
+                      className="p-3 bg-white text-indigo-600 rounded-xl shadow-2xl hover:bg-indigo-50 transition-all border border-indigo-100 flex items-center justify-center"
+                      title="Locate Me (GPS)"
                     >
-                      <Sparkles size={18}/>
+                      <LocateFixed size={20}/>
                     </button>
                   </div>
                 </div>
@@ -510,6 +512,20 @@ export const Register: React.FC = () => {
                         theme === 'light' ? 'bg-white border-slate-200 text-slate-900 focus:bg-white focus:border-indigo-600' : 
                         'bg-[#070b14] border-white/10 text-white focus:bg-white/10 focus:border-indigo-500'
                       }`}
+                      placeholder="SEARCH OR DROP PIN ON MAP..."
+                      onFocus={() => { if(address.length > 0) setShowSuggestions(true); }}
+                      onBlur={() => setTimeout(() => setShowSuggestions(false), 300)}
+                    />
+
+                    {/* Suggestions Dropdown */}
+                    {showSuggestions && (suggestionsLoading || suggestions.length > 0 || (address.length > 0 && !suggestionsLoading)) && (
+                      <div className={`absolute z-[110] left-0 right-0 top-full mt-2 rounded-2xl border shadow-2xl overflow-hidden max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-300 ${
+                        theme === 'light' ? 'bg-white border-slate-200 shadow-slate-200/50' : 'bg-[#0f172a] border-white/10 shadow-black/50'
+                      }`}>
+                        {suggestionsLoading ? (
+                          <div className="px-6 py-8 text-center space-y-3">
+                            <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 animate-pulse">Scanning Judicial Network...</p>
                       placeholder="SEARCH OR PAN MAP TO LOCATE..."
                       onFocus={() => { if(address.length > 2) setShowSuggestions(true); }}
                     />
@@ -525,6 +541,10 @@ export const Register: React.FC = () => {
                         ) : suggestions.length > 0 ? (
                           suggestions.map((s, idx) => (
                             <button
+                              key={idx} type="button" 
+                              onMouseDown={(e) => { e.preventDefault(); selectSuggestion(s); }}
+                              className={`w-full px-6 py-4 text-left transition-colors border-b last:border-b-0 ${
+                                theme === 'light' ? 'hover:bg-indigo-50 border-slate-100 text-slate-700' : 'hover:bg-indigo-600/10 border-white/5 text-slate-300'
                               key={idx} type="button" onClick={() => selectSuggestion(s)}
                               className={`w-full px-6 py-4 text-left transition-colors border-b last:border-b-0 ${
                                 theme === 'light' ? 'bg-white hover:bg-slate-50 border-slate-100 text-slate-700' : 'bg-[#0f172a] hover:bg-white/5 border-white/5 text-slate-300'
@@ -536,6 +556,10 @@ export const Register: React.FC = () => {
                               </div>
                             </button>
                           ))
+                        ) : address.length > 0 && (
+                          <div className="px-6 py-8 text-center space-y-2">
+                            <AlertCircle size={20} className="mx-auto text-orange-500" />
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">No matching nodes found in India</p>
                         ) : (
                           <div className={`px-6 py-8 text-center ${theme === 'light' ? 'bg-white' : 'bg-[#0f172a]'}`}>
                             <AlertCircle size={20} className="mx-auto mb-2 text-orange-500" />
