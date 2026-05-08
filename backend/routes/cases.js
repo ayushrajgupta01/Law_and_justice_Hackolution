@@ -272,7 +272,42 @@ router.get('/', verifyToken, async (req, res) => {
         ];
       }
     } else if (req.user.role === 'judge') {
-      query.assignedJudge = req.user.userId;
+      const judge = await User.findById(req.user.userId);
+      const addressParts = judge.address ? judge.address.split(',').map(p => p.trim()) : [];
+      
+      const broadTerms = [
+        'India', 'West Bengal', 'Maharashtra', 'Karnataka', 'Tamil Nadu', 'Delhi', 'Gujarat', 
+        'Rajasthan', 'Uttar Pradesh', 'Bihar', 'Punjab', 'Haryana', 'Madhya Pradesh', 
+        'Andhra Pradesh', 'Telangana', 'Kerala', 'Odisha', 'Assam'
+      ];
+      
+      // Terms to strip to find the core city name
+      const junkTerms = ['Road', 'Lane', 'Street', 'Avenue', 'Gali', 'Marg', 'Path', 'Sarani', 'Chambers', 'Court', 'High Court', 'Floor', 'Apartment', 'Bldg', 'Building', 'Police Station', 'PS'];
+      
+      const relevantParts = addressParts.filter(p => 
+        !broadTerms.includes(p) && 
+        !/^\d+$/.test(p) && 
+        p.length > 2
+      );
+
+      // Isolate the core city (e.g., "Kolkata") by removing street/building specifics
+      const cityCandidates = relevantParts.filter(p => !junkTerms.some(s => p.toLowerCase().includes(s.toLowerCase())));
+      const cityPattern = cityCandidates.length > 0 ? cityCandidates.join('|') : (relevantParts.slice(-1)[0] || 'Unknown');
+
+      // 1. Identify all lawyers from the same city
+      const localLawyers = await User.find({ 
+        role: 'lawyer', 
+        address: { $regex: cityPattern, $options: 'i' } 
+      }).select('_id');
+      const localLawyerIds = localLawyers.map(l => l._id);
+
+      // JURISDICTIONAL DOCKET: Show all cases in this city or handled by local lawyers.
+      // We REMOVE the assignedJudge restriction so judges can see the entire regional registry.
+      query.$or = [
+        { location: { $regex: cityPattern, $options: 'i' } },
+        { assignedLawyer: { $in: localLawyerIds } },
+        { assignedJudge: req.user.userId }
+      ];
     }
 
     const cases = await Case.find(query)
@@ -530,6 +565,27 @@ router.put('/:id/submit-to-court', verifyToken, checkRole(['lawyer']), async (re
     });
 
     await caseItem.save();
+
+    // Notify Judge
+    if (caseItem.assignedJudge) {
+      await new Notification({
+        recipient: caseItem.assignedJudge,
+        message: `⚖️ CASE FILED: Case #${caseItem.caseNumber} has been submitted to your docket by the advocate.`,
+        type: 'alert'
+      }).save();
+    } else {
+      // If no judge assigned, notify all judges (Registry Broadcast)
+      const allJudges = await User.find({ role: 'judge' });
+      const notifications = allJudges.map(j => ({
+        recipient: j._id,
+        message: `📋 REGISTRY UPDATE: New Case #${caseItem.caseNumber} has been filed and requires judicial assignment.`,
+        type: 'info'
+      }));
+      if (notifications.length > 0) {
+        await Notification.insertMany(notifications);
+      }
+    }
+
     res.json({ message: 'Case submitted to Judge successfully', case: caseItem });
   } catch (error) {
     console.error("SUBMIT TO COURT ERROR:", error);

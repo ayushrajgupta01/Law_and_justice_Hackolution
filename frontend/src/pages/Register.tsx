@@ -260,7 +260,6 @@ export const Register: React.FC = () => {
       aadhaarNumber,
       badgeNumber,
       licenseNumber,
-      undefined, // courtAssignment removed
       specialization,
       address,
       coords?.lat,
