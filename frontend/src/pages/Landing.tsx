@@ -77,22 +77,7 @@ export const Landing: React.FC = () => {
             <p className="mt-8 text-slate-400 text-lg sm:text-xl max-w-sm leading-relaxed font-medium relative z-20 mb-14">
               A Dedicated Legal Team Committed to Protecting Your Rights and Securing Your Future
             </p>
-
-            {/* Repositioned Bottom Left Card - Now in Flow for better spacing */}
-            <div className="hidden lg:block w-[400px] bg-slate-900/60 backdrop-blur-2xl border border-white/10 p-6 rounded-[2.5rem] relative z-20 shadow-[0_20px_50px_rgb(0,0,0,0.3)] hover:border-white/20 transition-all duration-500 group">
-              <div className="flex items-center gap-8">
-                <div className="w-28 h-28 bg-slate-800 rounded-3xl overflow-hidden relative shrink-0 shadow-lg group-hover:scale-105 transition-transform duration-500">
-                  <img src="https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=200" alt="Lawyer" className="w-full h-full object-cover" />
-                  <div className="absolute top-2 right-2 bg-slate-900/80 p-1.5 rounded-full text-white shadow-xl">
-                    <ArrowUpRight size={16} />
-                  </div>
-                </div>
-                <div>
-                  <h4 className="font-bold text-white text-[16px] leading-tight tracking-wider uppercase mb-4">PROTECTING EVERY <br /> DEAL YOU MAKE</h4>
-                  <a href="#" className="text-xs font-bold text-slate-400 tracking-widest underline hover:text-white transition-colors uppercase">Get Started</a>
-                </div>
-              </div>
-            </div>
+  
           </div>
         </main>
       </div>

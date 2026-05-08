@@ -1,10 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useNavigate, useLocation } from 'react-router-dom';
+import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import { 
   Shield, EyeOff, Users, FileText, MapPin, Calendar, 
   Info, CheckCircle, BookOpen, UploadCloud, MousePointer2, 
-  ChevronLeft, Sparkles, Gavel, Globe, Activity, AlertCircle 
+  ChevronLeft, Sparkles, Gavel, Globe, Activity, AlertCircle,
+  Navigation
 } from 'lucide-react';
 import { VisualTriage } from '../components/VisualTriage';
 
@@ -20,7 +23,24 @@ export const FileCase: React.FC = () => {
   const [showTriage, setShowTriage] = useState(!prefillData);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [coords, setCoords] = useState<{lat: number, lng: number} | null>(null);
+  const [isFetchingLocation, setIsFetchingLocation] = useState(false);
+  const [deadline, setDeadline] = useState<Date | null>(null);
   
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
+  const markerRef = useRef<maplibregl.Marker | null>(null);
+
+  const timelineRules: Record<string, number> = {
+    civil: 90,
+    criminal: 60,
+    cyber: 45,
+    corporate: 120,
+    commercial: 90,
+    family: 60,
+    property: 90,
+    other: 60
+  };
+
   const [formData, setFormData] = useState({
     title: prefillData?.title || '',
     description: prefillData?.description || '', 
@@ -33,6 +53,106 @@ export const FileCase: React.FC = () => {
     bnsSection: prefillData?.bnsSection || '',                  
     aiSuggestedEvidence: prefillData?.requiredEvidence || []    
   });
+
+  // Initialize Map
+  useEffect(() => {
+    if (showTriage || !mapContainerRef.current) return;
+
+    mapRef.current = new maplibregl.Map({
+      container: mapContainerRef.current,
+      style: {
+        version: 8,
+        sources: {
+          'osm-tiles': {
+            type: 'raster',
+            tiles: [
+              'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'
+            ],
+            tileSize: 256,
+            attribution: '© OpenStreetMap contributors'
+          }
+        },
+        layers: [
+          {
+            id: 'osm-layer',
+            type: 'raster',
+            source: 'osm-tiles',
+            minzoom: 0,
+            maxzoom: 19
+          }
+        ]
+      },
+      center: coords ? [coords.lng, coords.lat] : [78.9629, 20.5937],
+      zoom: coords ? 15 : 4
+    });
+
+    mapRef.current.addControl(new maplibregl.NavigationControl(), 'top-right');
+    mapRef.current.addControl(
+      new maplibregl.GeolocateControl({
+        positionOptions: { enableHighAccuracy: true },
+        trackUserLocation: true,
+        showUserLocation: true
+      }),
+      'top-right'
+    );
+
+    mapRef.current.on('click', (e) => {
+      handleMapSelect(e.lngLat.lat, e.lngLat.lng);
+    });
+
+    return () => {
+      mapRef.current?.remove();
+    };
+  }, [showTriage]);
+
+  // Update Marker
+  useEffect(() => {
+    if (!mapRef.current || !coords) return;
+
+    if (!markerRef.current) {
+      markerRef.current = new maplibregl.Marker({ color: '#4f46e5', draggable: true })
+        .setLngLat([coords.lng, coords.lat])
+        .addTo(mapRef.current);
+
+      markerRef.current.on('dragend', () => {
+        const lngLat = markerRef.current?.getLngLat();
+        if (lngLat) handleMapSelect(lngLat.lat, lngLat.lng);
+      });
+    } else {
+      markerRef.current.setLngLat([coords.lng, coords.lat]);
+    }
+
+    mapRef.current.flyTo({ center: [coords.lng, coords.lat], zoom: 15 });
+  }, [coords]);
+
+  const handleMapSelect = async (lat: number, lng: number) => {
+    setCoords({ lat, lng });
+    setIsFetchingLocation(true);
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`);
+      const data = await res.json();
+      if (data.display_name) {
+        setFormData(prev => ({ ...prev, location: data.display_name }));
+      }
+    } catch (e) {
+      console.error("Reverse geocoding failed", e);
+    } finally {
+      setIsFetchingLocation(false);
+    }
+  };
+
+  const handleLocateMe = () => {
+    if (navigator.geolocation) {
+      setIsFetchingLocation(true);
+      navigator.geolocation.getCurrentPosition((pos) => {
+        handleMapSelect(pos.coords.latitude, pos.coords.longitude);
+      }, () => {
+        setIsFetchingLocation(false);
+      });
+    }
+  };
 
   // Automatically try to get GPS on mount for routing and pre-filling address
   useEffect(() => {
@@ -60,6 +180,14 @@ export const FileCase: React.FC = () => {
       );
     }
   }, []);
+
+  // Calculate deadline based on BNS rules
+  useEffect(() => {
+    const days = timelineRules[formData.type] || 60;
+    const date = new Date();
+    date.setDate(date.getDate() + days);
+    setDeadline(date);
+  }, [formData.type]);
 
   const handleTriageSelect = (category: string, title: string) => {
     setFormData(prev => ({
@@ -278,11 +406,56 @@ export const FileCase: React.FC = () => {
                   </div>
                   <div className="space-y-3">
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] ml-2">Geo-Location</label>
+                    
+                    {/* Auto-fetch Section for Citizens */}
+                    <div className="p-6 bg-indigo-500/5 border border-indigo-500/10 rounded-[1.5rem] mb-4 flex items-center justify-between group hover:border-indigo-500/30 transition-all">
+                      <div className="flex items-center gap-4">
+                        <div className="p-3 bg-indigo-500/10 text-indigo-400 rounded-xl">
+                          <Sparkles size={18} className="animate-pulse" />
+                        </div>
+                        <div>
+                          <h4 className="text-[10px] font-black text-white uppercase tracking-widest">Auto-Fetch Incident Node</h4>
+                          <p className="text-[9px] font-bold text-slate-500 uppercase mt-0.5">Use GPS to synchronize the exact coordinates</p>
+                        </div>
+                      </div>
+                      <button 
+                        type="button"
+                        onClick={handleLocateMe}
+                        disabled={isFetchingLocation}
+                        className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black text-[9px] uppercase tracking-widest shadow-lg shadow-indigo-500/20 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                      >
+                        {isFetchingLocation ? (
+                          <>
+                            <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                            SYNCING...
+                          </>
+                        ) : 'Fetch Now'}
+                      </button>
+                    </div>
+
                     <div className="relative">
                       <MapPin size={18} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-500" />
                       <input name="location" value={formData.location} onChange={handleChange} required className="w-full pl-14 pr-8 py-5 bg-white/5 border border-white/10 rounded-[1.5rem] focus:bg-white focus:text-slate-950 transition-all outline-none font-black text-xs uppercase tracking-widest" placeholder="e.g. MG ROAD, BANGALORE" />
                     </div>
                   </div>
+
+                  {/* INTERACTIVE MAP */}
+                  <div className="space-y-3 md:col-span-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] ml-2">Verify Precise Incident Node</label>
+                    <div className="w-full h-80 rounded-[2rem] overflow-hidden border border-white/10 relative shadow-2xl">
+                      <div ref={mapContainerRef} className="w-full h-full" />
+                      <button 
+                        type="button" 
+                        onClick={handleLocateMe}
+                        className="absolute bottom-6 right-6 z-10 p-4 bg-white text-indigo-600 rounded-2xl shadow-2xl hover:bg-indigo-50 transition-all border border-indigo-100 flex items-center gap-3 group"
+                      >
+                        <Navigation size={18} className="group-hover:rotate-12 transition-transform" />
+                        <span className="text-[10px] font-black uppercase tracking-widest">Locate Incident</span>
+                      </button>
+                    </div>
+                    <p className="text-[9px] font-bold text-slate-500 uppercase tracking-[0.2em] ml-4 mt-2">Drop pin or click to establish geospatial coordinates for the record.</p>
+                  </div>
+
                   <div className="space-y-3">
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] ml-2">Timestamp of Incident</label>
                     <div className="relative">
@@ -297,6 +470,41 @@ export const FileCase: React.FC = () => {
                   <textarea name="description" value={formData.description} onChange={handleChange} required rows={8} className="w-full p-8 bg-white/5 border border-white/10 rounded-[2rem] focus:bg-white focus:text-slate-950 transition-all outline-none font-medium text-sm leading-relaxed" placeholder="Detailed factual description..." />
                 </div>
               </div>
+
+              {/* Floating Statutory Alert
+              {deadline && (
+                <div className="fixed bottom-10 right-10 z-[200] animate-in slide-in-from-right-10 duration-700">
+                  <div className="bg-[#0f172a]/95 backdrop-blur-xl border border-amber-500/30 rounded-[2.5rem] p-8 shadow-[0_0_50px_rgba(245,158,11,0.15)] max-w-xs group hover:border-amber-500 transition-all">
+                    <div className="flex items-center gap-5 mb-6">
+                      <div className="p-4 bg-amber-500/10 text-amber-500 rounded-2xl">
+                        <AlertCircle size={24} className="animate-pulse" />
+                      </div>
+                      <div>
+                        <h4 className="text-[10px] font-black text-white uppercase tracking-[0.2em]">BNSS Compliance</h4>
+                        <p className="text-[14px] font-black text-amber-500 uppercase tracking-tight">{formData.type} Window</p>
+                      </div>
+                    </div>
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-end">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Resolution Timer</span>
+                        <span className="text-3xl font-black text-white tracking-tighter">
+                          {Math.ceil((deadline.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))}D
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-amber-500 transition-all duration-1000 animate-pulse" 
+                          style={{ width: `${(timelineRules[formData.type] / 120) * 100}%` }}
+                        ></div>
+                      </div>
+                      <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-widest text-slate-500">
+                        <span>Statutory Limit</span>
+                        <span className="text-white">{deadline.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )} */}
 
               {/* EVIDENCE UPLOAD */}
               <div className="bg-white/5 backdrop-blur-xl rounded-[3rem] border border-white/10 p-8 lg:p-12 space-y-10">

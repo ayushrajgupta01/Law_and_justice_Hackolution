@@ -76,6 +76,7 @@ export const CitizenDashboard: React.FC = () => {
   const [personalDocs, setPersonalDocs] = useState<PersonalDocument[]>([]);
   const [selectedNotice, setSelectedNotice] = useState<LegalNotice | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [showSOSTracker, setShowSOSTracker] = useState(false);
   const [isSOSMinimized, setIsSOSMinimized] = useState(false);
@@ -88,7 +89,10 @@ export const CitizenDashboard: React.FC = () => {
   const [sosActiveAddress, setSosActiveAddress] = useState("Locating...");
   const [manualAddress, setManualAddress] = useState("");
 
-  const fetchData = async () => {
+  const fetchData = async (isSilent = false) => {
+    if (!isSilent) setLoading(true);
+    setIsRefreshing(true);
+    
     try {
       const apiUrl = getApiUrl();
       
@@ -120,6 +124,7 @@ export const CitizenDashboard: React.FC = () => {
       console.error("Dashboard Fetch Error:", err);
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -151,43 +156,46 @@ export const CitizenDashboard: React.FC = () => {
       });
       if (res.ok) {
         alert("Advocate Appointed Successfully.");
-        fetchData();
+        fetchData(true);
       }
     } catch (err) { console.error(err); }
   };
 
-  const handleUpdateRegisteredLocation = () => {
+  const updateLocationInBackend = async (lat: number, lng: number) => {
     setIsUpdatingLocation(true);
+    try {
+      setCurrentCoords({ lat, lng });
+      const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+      const geoData = await geoRes.json();
+      const streetAddress = geoData.display_name || "Unknown Location";
+
+      const res = await fetch(`${getApiUrl()}/users/update-location`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ address: streetAddress, lat, lng })
+      });
+
+      if (res.ok) {
+        setRegisteredAddress(streetAddress);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsUpdatingLocation(false);
+    }
+  };
+
+  const handleUpdateRegisteredLocation = () => {
     if (!navigator.geolocation) {
       alert("Geolocation is not supported by your browser.");
-      setIsUpdatingLocation(false);
       return;
     }
 
     navigator.geolocation.getCurrentPosition(async (pos) => {
-      try {
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        setCurrentCoords({ lat, lng });
-
-        const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
-        const geoData = await geoRes.json();
-        const streetAddress = geoData.display_name || "Unknown Location";
-
-        const res = await fetch(`${getApiUrl()}/users/update-location`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ address: streetAddress, lat, lng })
-        });
-
-        if (res.ok) {
-          setRegisteredAddress(streetAddress);
-          alert("✅ Secure location successfully registered.");
-        }
-      } catch (err) { console.error(err); } finally { setIsUpdatingLocation(false); }
+      await updateLocationInBackend(pos.coords.latitude, pos.coords.longitude);
+      alert("✅ Secure location successfully registered.");
     }, () => {
       alert("Location access denied.");
-      setIsUpdatingLocation(false);
     });
   };
 
@@ -305,7 +313,7 @@ export const CitizenDashboard: React.FC = () => {
     <div className="flex items-center justify-center min-h-screen bg-[#070b14] dark:bg-[#070b14] light:bg-slate-50 high-contrast:bg-black">
       <div className="flex flex-col items-center gap-6">
         <div className="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-        <p className="text-indigo-400 font-black animate-pulse uppercase tracking-[0.3em] text-[10px]">Accessing Justice Records...</p>
+        <p className="text-indigo-400 font-black uppercase tracking-[0.3em] text-[10px]">Accessing Justice Records...</p>
       </div>
     </div>
   );
@@ -365,9 +373,14 @@ export const CitizenDashboard: React.FC = () => {
             <div className={`p-2.5 rounded-xl border transition-all cursor-pointer relative ${theme === 'light' ? 'bg-slate-100 border-slate-200 hover:bg-slate-200' : theme === 'high-contrast' ? 'bg-zinc-900 border-white hover:bg-zinc-800' : 'bg-white/5 border-white/10 hover:bg-white/10'}`}>
                <Notifications />
             </div>
-            <button onClick={handleSOS} className="px-6 py-2.5 bg-red-600 text-white rounded-2xl font-black text-[10px] hover:bg-red-700 transition-all shadow-[0_0_30px_rgba(220,38,38,0.2)] uppercase tracking-[0.2em] animate-pulse border border-red-500/50">Trigger SOS</button>
+            <button onClick={handleSOS} className="px-6 py-2.5 bg-red-600 text-white rounded-2xl font-black text-[10px] hover:bg-red-700 transition-all shadow-[0_0_30px_rgba(220,38,38,0.2)] uppercase tracking-[0.2em] border border-red-500/50">Trigger SOS</button>
           </div>
         </div>
+        {isRefreshing && !loading && (
+          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-indigo-500/20 overflow-hidden">
+            <div className="w-full h-full bg-indigo-500 animate-[loading_2s_ease-in-out_infinite] origin-left"></div>
+          </div>
+        )}
       </nav>
 
       <div className="max-w-[1440px] mx-auto p-6 lg:p-12 space-y-16 pb-32">
@@ -403,7 +416,18 @@ export const CitizenDashboard: React.FC = () => {
               </div>
             ) : (
               cases.map((caseItem) => (
-                <div key={caseItem._id} className={`backdrop-blur-xl rounded-[3rem] border transition-all duration-700 overflow-hidden ${theme === 'light' ? 'bg-white border-slate-200 shadow-sm' : theme === 'high-contrast' ? 'bg-zinc-900 border-white' : 'bg-white/5 border-white/10'}`}>
+                <div key={caseItem._id} className={`backdrop-blur-xl rounded-[3rem] border transition-all duration-700 overflow-hidden relative group ${theme === 'light' ? 'bg-white border-slate-200 shadow-sm' : theme === 'high-contrast' ? 'bg-zinc-900 border-white' : 'bg-white/5 border-white/10'}`}>
+                  {/* Floating Corner Deadline Badge */}
+                  <div className="absolute top-10 right-28 flex flex-col items-end gap-1">
+                    <div className="px-3 py-1 bg-amber-500/10 border border-amber-500/20 rounded-full flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse"></div>
+                      <span className="text-[9px] font-black text-amber-500 uppercase tracking-widest">
+                        {Math.ceil((new Date(caseItem.deadlineDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))}D LEFT
+                      </span>
+                    </div>
+                    <p className="text-[7px] font-black text-slate-500 uppercase tracking-[0.2em]">BNS STATUTORY LIMIT</p>
+                  </div>
+
                   <div className="p-8 lg:p-12 space-y-10">
                     <div className="flex flex-col md:flex-row justify-between items-start gap-6">
                       <div>
@@ -411,9 +435,12 @@ export const CitizenDashboard: React.FC = () => {
                           <h3 className={`text-2xl font-black tracking-tighter uppercase transition-colors ${theme === 'light' ? 'text-slate-900' : 'text-white'}`}>{caseItem.title}</h3>
                           <span className="px-3 py-1 bg-white/5 rounded-full border border-white/10 text-[10px] font-black text-indigo-400 uppercase tracking-widest">ID: {caseItem.caseNumber}</span>
                         </div>
-                        <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Filed On: {new Date(caseItem.createdAt).toLocaleDateString()}</p>
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Filed On: {new Date(caseItem.createdAt).toLocaleDateString()}</p>
+                          <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400/60">Target Date: {new Date(caseItem.deadlineDate).toLocaleDateString()}</p>
+                        </div>
                       </div>
-                      <button onClick={() => navigate(`/case/${caseItem._id}`)} className={`p-5 rounded-3xl border transition-all duration-500 ${theme === 'light' ? 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-indigo-600 hover:text-white' : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white hover:text-slate-950'}`}><ChevronRight size={24}/></button>
+                      <button onClick={() => navigate(`/case/${caseItem._id}`)} className={`p-5 rounded-3xl border transition-all duration-500 mr-12 md:mr-0 ${theme === 'light' ? 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-indigo-600 hover:text-white' : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white hover:text-slate-950'}`}><ChevronRight size={24}/></button>
                     </div>
 
                     {/* INTERESTED LAWYERS SECTION */}
@@ -475,7 +502,17 @@ export const CitizenDashboard: React.FC = () => {
             >
               <TileLayer url={theme === 'light' ? "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" : "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"} />
               {currentCoords && (
-                <Marker position={[currentCoords.lat, currentCoords.lng]}>
+                <Marker 
+                  draggable={true}
+                  eventHandlers={{
+                    dragend: (e) => {
+                      const marker = e.target;
+                      const position = marker.getLatLng();
+                      updateLocationInBackend(position.lat, position.lng);
+                    },
+                  }}
+                  position={[currentCoords.lat, currentCoords.lng]}
+                >
                   <Popup>
                     <div className="font-black text-[10px] uppercase">Jurisdiction Center</div>
                     <div className="text-xs">{registeredAddress}</div>
@@ -483,6 +520,25 @@ export const CitizenDashboard: React.FC = () => {
                 </Marker>
               )}
             </MapContainer>
+
+            {/* LOCATE ME BUTTON OVERLAY */}
+            <button 
+              onClick={handleUpdateRegisteredLocation}
+              disabled={isUpdatingLocation}
+              className={`absolute bottom-6 right-6 z-[1000] p-4 rounded-2xl shadow-2xl transition-all border flex items-center gap-3 group ${
+                theme === 'light' ? 'bg-white border-slate-200 text-indigo-600 hover:bg-slate-50' : 
+                'bg-slate-900 border-white/10 text-white hover:bg-slate-800'
+              }`}
+              title="Sync Current GPS"
+            >
+              <div className={`p-2 rounded-xl ${isUpdatingLocation ? 'animate-spin' : 'group-hover:rotate-12 transition-transform'} ${theme === 'light' ? 'bg-indigo-50' : 'bg-white/10'}`}>
+                {isUpdatingLocation ? <Activity size={18} /> : <Navigation size={18} />}
+              </div>
+              <div className="text-left pr-2">
+                <p className="text-[8px] font-black uppercase tracking-[0.2em] opacity-60">Geospatial Sync</p>
+                <p className="text-[10px] font-black uppercase tracking-widest">Locate Me</p>
+              </div>
+            </button>
           </div>
         </div>
 

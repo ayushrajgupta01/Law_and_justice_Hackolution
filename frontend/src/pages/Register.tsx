@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../context/ThemeContext';
 import { 
   Mail, Lock, User, AlertCircle, Shield, 
   Phone, Fingerprint, Gavel, Briefcase, 
   CheckCircle2, ArrowRight, Sparkles,
-  Sun, Moon, Eye
+  Sun, Moon, Eye, MapPin, LocateFixed
 } from 'lucide-react';
 
 const roles = [
@@ -25,13 +27,125 @@ export const Register: React.FC = () => {
   const [aadhaarNumber, setAadhaarNumber] = useState('');
   const [badgeNumber, setBadgeNumber] = useState('');
   const [licenseNumber, setLicenseNumber] = useState('');
-  const [courtAssignment, setCourtAssignment] = useState('');
   const [specialization, setSpecialization] = useState('');
   const [address, setAddress] = useState('');
-  const [coords, setCoords] = useState<{lat: number, lng: number} | null>(null);
+  const [coords, setCoords] = useState<{lat: number, lng: number} | null>({ lat: 20.5937, lng: 78.9629 }); // Default to Center of India
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [role, setRole] = useState('citizen');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [fetchingLocation, setFetchingLocation] = useState(false);
+  
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
+  const markerRef = useRef<maplibregl.Marker | null>(null);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const [isPanning, setIsPanning] = useState(false);
+
+  // Initialize MapLibre
+  useEffect(() => {
+    if (!mapContainerRef.current) return;
+
+    mapRef.current = new maplibregl.Map({
+      container: mapContainerRef.current,
+      style: {
+        version: 8,
+        sources: {
+          'osm-tiles': {
+            type: 'raster',
+            tiles: [
+              'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'
+            ],
+            tileSize: 256,
+            attribution: '© OpenStreetMap contributors'
+          }
+        },
+        layers: [
+          {
+            id: 'osm-layer',
+            type: 'raster',
+            source: 'osm-tiles',
+            minzoom: 0,
+            maxzoom: 19
+          }
+        ]
+      },
+      center: [78.9629, 20.5937],
+      zoom: 4
+    });
+
+    mapRef.current.addControl(new maplibregl.NavigationControl(), 'top-right');
+    
+    const geolocate = new maplibregl.GeolocateControl({
+      positionOptions: {
+        enableHighAccuracy: true
+      },
+      trackUserLocation: true,
+      showUserLocation: true
+    });
+    
+    mapRef.current.addControl(geolocate, 'top-right');
+
+    // Link built-in geolocate button to address detection
+    geolocate.on('geolocate', (e: any) => {
+      handleMapLocationSelect(e.coords.latitude, e.coords.longitude);
+    });
+
+    mapRef.current.on('movestart', () => setIsPanning(true));
+    mapRef.current.on('moveend', () => {
+      setIsPanning(false);
+      const center = mapRef.current?.getCenter();
+      if (center) {
+        handleMapLocationSelect(center.lat, center.lng);
+      }
+    });
+
+    mapRef.current.on('click', (e) => {
+      mapRef.current?.flyTo({ center: e.lngLat, zoom: 15 });
+    });
+
+    // Proactively try to detect location on mount
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition((pos) => {
+        handleMapLocationSelect(pos.coords.latitude, pos.coords.longitude);
+      });
+    }
+
+    return () => {
+      mapRef.current?.remove();
+    };
+  }, []);
+
+  // Sync coords with map view
+  useEffect(() => {
+    if (!mapRef.current || !coords) return;
+    
+    // Only fly if the map center is significantly different from coords 
+    const center = mapRef.current.getCenter();
+    const dist = Math.sqrt(Math.pow(center.lat - coords.lat, 2) + Math.pow(center.lng - coords.lng, 2));
+    
+    if (dist > 0.0001) {
+      mapRef.current.flyTo({
+        center: [coords.lng, coords.lat],
+        zoom: 15,
+        essential: true
+      });
+    }
+  }, [coords]);
+
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      if (abortControllerRef.current) abortControllerRef.current.abort();
+    };
+  }, []);
+
   const navigate = useNavigate();
   const { register } = useAuth();
   const { theme, toggleTheme } = useTheme();
@@ -53,12 +167,85 @@ export const Register: React.FC = () => {
     }
   };
 
+  const handleMapLocationSelect = async (lat: number, lng: number) => {
+    setCoords({ lat, lng });
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`);
+      const data = await res.json();
+      if (data.display_name) setAddress(data.display_name);
+    } catch (e) {}
+  };
+
+  const handleAddressChange = (val: string) => {
+    setAddress(val);
+    
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+
+    if (val.trim().length > 0) {
+      setSuggestionsLoading(true);
+      setShowSuggestions(true);
+      
+      searchTimeoutRef.current = setTimeout(async () => {
+        try {
+          abortControllerRef.current = new AbortController();
+          const baseUrl = 'https://nominatim.openstreetmap.org/search?format=json&countrycodes=in&addressdetails=1&limit=10';
+          
+          let query = val.toLowerCase();
+          
+          if (role === 'police' && !query.includes('police')) {
+            query = `${val} police station`;
+          } else if ((role === 'lawyer' || role === 'judge') && !query.includes('court')) {
+            query = `${val} court`;
+          }
+
+          const res = await fetch(`${baseUrl}&q=${encodeURIComponent(query)}`, {
+            signal: abortControllerRef.current.signal,
+            headers: { 'Accept-Language': 'en-US,en;q=0.5' }
+          });
+          const data = await res.json();
+          
+          if (!Array.isArray(data)) {
+            setSuggestions([]);
+            return;
+          }
+
+          setSuggestions(data.slice(0, 10));
+        } catch (e: any) {
+          if (e.name !== 'AbortError') {
+            console.error('Location search failed:', e);
+            setSuggestions([]);
+          }
+        } finally {
+          setSuggestionsLoading(false);
+        }
+      }, 400);
+    } else {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      setSuggestionsLoading(false);
+    }
+  };
+
+  const selectSuggestion = (s: any) => {
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    setAddress(s.display_name);
+    setCoords({ lat: parseFloat(s.lat), lng: parseFloat(s.lon) });
+    setSuggestions([]);
+    setShowSuggestions(false);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
     if (password !== confirmPassword) {
       setError('Passwords do not match');
+      return;
+    }
+
+    if (!coords) {
+      setError('Please select a precise location on the map');
       return;
     }
 
@@ -73,7 +260,6 @@ export const Register: React.FC = () => {
       aadhaarNumber,
       badgeNumber,
       licenseNumber,
-      courtAssignment,
       specialization,
       address,
       coords?.lat,
@@ -246,8 +432,129 @@ export const Register: React.FC = () => {
               </div>
             </div>
 
-            {/* Dynamic Credentials */}
-            {(role === 'police' || role === 'lawyer' || role === 'judge') && (
+            {/* Auto-fetch Section for Citizens */}
+            {role === 'citizen' && (
+              <div className={`p-6 rounded-2xl border flex items-center justify-between group transition-all ${
+                theme === 'light' ? 'bg-white border-indigo-100' : 'bg-white/5 border-white/10 hover:border-indigo-500/30'
+              }`}>
+                <div className="flex items-center gap-4">
+                  <div className={`p-3 rounded-xl ${theme === 'light' ? 'bg-indigo-50 text-indigo-600' : 'bg-indigo-500/10 text-indigo-400'}`}>
+                    <Sparkles size={20} className="animate-pulse" />
+                  </div>
+                  <div>
+                    <h4 className={`text-[10px] font-black uppercase tracking-widest ${theme === 'light' ? 'text-indigo-900' : 'text-white'}`}>Auto-Fetch Location</h4>
+                    <p className="text-[9px] font-bold text-slate-500 uppercase mt-0.5">Sync with your current GPS coordinates</p>
+                  </div>
+                </div>
+                <button 
+                  type="button"
+                  onClick={handleCaptureLocation}
+                  disabled={fetchingLocation}
+                  className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black text-[9px] uppercase tracking-widest shadow-lg shadow-indigo-500/20 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {fetchingLocation ? (
+                    <>
+                      <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                      SYNCING...
+                    </>
+                  ) : 'Fetch Now'}
+                </button>
+              </div>
+            )}
+
+            {/* Location Protocol - Map Integration */}
+            <div className={`p-8 rounded-[2rem] border animate-in zoom-in-95 duration-500 ${
+              theme === 'light' ? 'bg-indigo-50 border-indigo-100' : 'bg-indigo-600/5 border border-indigo-500/20'
+            }`}>
+              <div className="flex items-center gap-3 mb-6">
+                <MapPin size={16} className="text-indigo-500" />
+                <span className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.3em]">Geospatial & Address Protocol</span>
+              </div>
+              
+              <div className="space-y-6">
+                {/* Visual Map Libre */}
+                <div className="w-full h-64 rounded-[1.5rem] overflow-hidden border border-indigo-500/20 shadow-xl relative z-10">
+                  <div ref={mapContainerRef} className="w-full h-full" />
+                  
+                  {/* Google Style Locator Pin (Fixed in Center) */}
+                  <div className={`absolute inset-0 flex items-center justify-center pointer-events-none z-[1001] transition-transform duration-200 ${isPanning ? '-translate-y-4' : ''}`}>
+                    <div className="relative">
+                      {/* The Pin */}
+                      <div className={`marker-pin ${isPanning ? 'floating' : ''}`}></div>
+                      {/* Ground Shadow/Pulse */}
+                      <div className="marker-shadow"></div>
+                      {!isPanning && <div className="marker-pulse"></div>}
+                    </div>
+                  </div>
+
+                  <div className="absolute bottom-4 right-4 z-[1000] flex flex-col gap-2">
+                    <button
+                      type="button" onClick={handleCaptureLocation}
+                      className="p-3 bg-white text-indigo-600 rounded-xl shadow-2xl hover:bg-indigo-50 transition-all border border-indigo-100 flex items-center justify-center"
+                      title="Locate Me (GPS)"
+                    >
+                      <LocateFixed size={20}/>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Verified Address Node</label>
+                  <div className="relative group">
+                    <MapPin className={`absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 transition-colors ${
+                      theme === 'light' ? 'text-slate-400 group-focus-within:text-indigo-600' : 'text-slate-600 group-focus-within:text-indigo-500'
+                    }`} />
+                    <input
+                      type="text" value={address} onChange={(e) => handleAddressChange(e.target.value)} required
+                      className={`w-full pl-10 pr-4 py-4 border rounded-2xl outline-none font-bold text-xs uppercase tracking-widest ${
+                        theme === 'light' ? 'bg-white border-slate-200 text-slate-900 focus:bg-white focus:border-indigo-600' : 
+                        'bg-[#070b14] border-white/10 text-white focus:bg-white/10 focus:border-indigo-500'
+                      }`}
+                      placeholder="SEARCH OR DROP PIN ON MAP..."
+                      onFocus={() => { if(address.length > 0) setShowSuggestions(true); }}
+                      onBlur={() => setTimeout(() => setShowSuggestions(false), 300)}
+                    />
+
+                    {/* Suggestions Dropdown */}
+                    {showSuggestions && (suggestionsLoading || suggestions.length > 0 || (address.length > 2 && !suggestionsLoading && suggestions.length === 0)) && (
+                      <div className={`absolute z-[110] left-0 right-0 top-full mt-2 rounded-2xl border shadow-2xl overflow-hidden max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-300 ${
+                        theme === 'light' ? 'bg-white border-slate-200 shadow-slate-200/50' : 'bg-[#0f172a] border-white/10 shadow-black/50'
+                      }`}>
+                        {suggestionsLoading ? (
+                          <div className="px-6 py-8 text-center space-y-3">
+                            <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 animate-pulse">Scanning Judicial Network...</p>
+                          </div>
+                        ) : suggestions.length > 0 ? (
+                          suggestions.map((s, idx) => (
+                            <button
+                              key={idx} type="button" 
+                              onMouseDown={(e) => { e.preventDefault(); selectSuggestion(s); }}
+                              className={`w-full px-6 py-4 text-left transition-colors border-b last:border-b-0 ${
+                                theme === 'light' ? 'hover:bg-indigo-50 border-slate-100 text-slate-700' : 'hover:bg-indigo-600/10 border-white/5 text-slate-300'
+                              }`}
+                            >
+                              <div className="flex items-start gap-3">
+                                <MapPin size={14} className="mt-0.5 shrink-0 text-indigo-500" />
+                                <span className="font-bold text-[10px] uppercase tracking-wider">{s.display_name}</span>
+                              </div>
+                            </button>
+                          ))
+                        ) : address.length > 0 && (
+                          <div className="px-6 py-8 text-center space-y-2">
+                            <AlertCircle size={20} className="mx-auto text-orange-500" />
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">No matching nodes found in India</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Dynamic Credentials - Official Verification for Police/Lawyers */}
+            {(role === 'police' || role === 'lawyer') && (
               <div className={`p-8 rounded-[2rem] border animate-in zoom-in-95 duration-500 ${
                 theme === 'light' ? 'bg-indigo-50 border-indigo-100' : 'bg-indigo-600/5 border border-indigo-500/20'
               }`}>
@@ -258,49 +565,19 @@ export const Register: React.FC = () => {
                 
                 <div className="space-y-6">
                   {role === 'police' && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Badge Number</label>
-                        <input
-                          type="text" value={badgeNumber} onChange={(e) => setBadgeNumber(e.target.value)} required
-                          className={`w-full px-6 py-4 border rounded-2xl outline-none font-bold text-sm uppercase tracking-widest ${
-                            theme === 'light' ? 'bg-white border-slate-200 text-slate-900 focus:border-indigo-600' : 
-                            'bg-[#070b14] border-white/10 text-white focus:border-indigo-500'
-                          }`}
-                          placeholder="POL-00000"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Station Coordinates</label>
-                        <button
-                          type="button" onClick={handleCaptureLocation}
-                          className={`w-full px-6 py-4 border rounded-2xl outline-none font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-3 transition-all ${
-                            coords 
-                              ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' 
-                              : (theme === 'light' ? 'bg-white border-slate-200 text-indigo-600 hover:border-indigo-600' : 'bg-[#070b14] border-white/10 text-indigo-400 hover:border-indigo-500')
-                          }`}
-                        >
-                          {coords ? <CheckCircle2 size={16}/> : <MapPin size={16}/>}
-                          {coords ? 'LOCATION SECURED' : 'CAPTURE STATION GPS'}
-                        </button>
-                      </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Badge Number</label>
+                      <input
+                        type="text" value={badgeNumber} onChange={(e) => setBadgeNumber(e.target.value)} required
+                        className={`w-full px-6 py-4 border rounded-2xl outline-none font-bold text-sm uppercase tracking-widest ${
+                          theme === 'light' ? 'bg-white border-slate-200 text-slate-900 focus:border-indigo-600' : 
+                          'bg-[#070b14] border-white/10 text-white focus:border-indigo-500'
+                        }`}
+                        placeholder="POL-00000"
+                      />
                     </div>
                   )}
                   
-                  {/* Shared Address/Station Field for all Official Roles */}
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">
-                      {role === 'police' ? 'Station Address' : role === 'judge' ? 'Chambers/Court Address' : 'Office Address'}
-                    </label>
-                    <input
-                      type="text" value={address} onChange={(e) => setAddress(e.target.value)} required
-                      className={`w-full px-6 py-4 border rounded-2xl outline-none font-bold text-sm uppercase tracking-widest ${
-                        theme === 'light' ? 'bg-white border-slate-200 text-slate-900 focus:border-indigo-600' : 
-                        'bg-[#070b14] border-white/10 text-white focus:border-indigo-500'
-                      }`}
-                      placeholder="ENTER FULL PHYSICAL ADDRESS"
-                    />
-                  </div>
                   {role === 'lawyer' && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                       <div className="space-y-2">
@@ -331,21 +608,9 @@ export const Register: React.FC = () => {
                           <option value="corporate">Corporate Law</option>
                           <option value="commercial">Commercial Law</option>
                           <option value="property">Property Law</option>
-                          <option value="general">General Practice</option>                        </select>
+                          <option value="general">General Practice</option>
+                        </select>
                       </div>
-                    </div>
-                  )}
-                  {role === 'judge' && (
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Court Assignment Node</label>
-                      <input
-                        type="text" value={courtAssignment} onChange={(e) => setCourtAssignment(e.target.value)} required
-                        className={`w-full px-6 py-4 border rounded-2xl outline-none font-bold text-sm uppercase tracking-wider ${
-                          theme === 'light' ? 'bg-white border-slate-200 text-slate-900 focus:border-indigo-600' : 
-                          'bg-[#070b14] border-white/10 text-white focus:border-indigo-500'
-                        }`}
-                        placeholder="E.G. HIGH COURT KARNATAKA"
-                      />
                     </div>
                   )}
                 </div>

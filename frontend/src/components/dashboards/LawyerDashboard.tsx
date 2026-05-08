@@ -132,7 +132,7 @@ export const LawyerDashboard: React.FC = () => {
     <div className="flex items-center justify-center min-h-screen bg-[#070b14] dark:bg-[#070b14] light:bg-slate-50 high-contrast:bg-black transition-colors duration-500">
       <div className="flex flex-col items-center gap-6">
         <div className="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin shadow-[0_0_30px_rgba(79,70,229,0.3)]"></div>
-        <p className="text-indigo-400 font-black animate-pulse uppercase tracking-[0.3em] text-[10px]">Accessing Bar Records...</p>
+        <p className="text-indigo-400 font-black uppercase tracking-[0.3em] text-[10px]">Accessing Bar Records...</p>
       </div>
     </div>
   );
@@ -237,7 +237,14 @@ export const LawyerDashboard: React.FC = () => {
                       <div key={c._id} className={`p-8 rounded-[2.5rem] border transition-all group ${theme === 'light' ? 'bg-white border-slate-200 shadow-sm hover:border-indigo-300' : 'bg-white/5 border-white/5 hover:border-indigo-500/30'}`}>
                         <div className="flex justify-between items-start mb-8">
                           <div>
-                            <div className="flex items-center gap-3 mb-3"><span className={`px-3 py-1 rounded-lg text-[8px] font-black uppercase tracking-widest bg-emerald-500/10 text-emerald-500`}>{c.status.replace('_', ' ')}</span></div>
+                            <div className="flex items-center gap-3 mb-3">
+                              <span className={`px-3 py-1 rounded-lg text-[8px] font-black uppercase tracking-widest bg-emerald-500/10 text-emerald-500`}>{c.status.replace('_', ' ')}</span>
+                              {(c as any).deadlineDate && (
+                                <span className={`px-3 py-1 rounded-lg text-[8px] font-black uppercase tracking-widest bg-amber-500/10 text-amber-500 border border-amber-500/20`}>
+                                  Deadline: {new Date((c as any).deadlineDate).toLocaleDateString()}
+                                </span>
+                              )}
+                            </div>
                             <h4 className={`text-2xl font-black tracking-tighter uppercase transition-colors ${theme === 'light' ? 'text-slate-900 group-hover:text-indigo-600' : 'text-white group-hover:text-indigo-400'}`}>{c.title}</h4>
                             <p className="text-[10px] font-bold text-slate-500 mt-2 uppercase tracking-widest">Node: {c.caseNumber} • {c.location}</p>
                           </div>
