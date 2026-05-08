@@ -28,16 +28,14 @@ const httpServer = createServer(app);
 
 // --- 1. MIDDLEWARE (MUST BE AT THE TOP) ---
 
-// Allow Frontend URLs
-// Middleware
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 const allowedOrigins = [
   process.env.FRONTEND_URL,
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-  'http://localhost:3000'
+  'https://nayaysarthi-f7b1b.web.app', 
+  'https://nayaysarthi-f7b1b.firebaseapp.com',
+  'http://localhost:5173'
 ];
 
 app.use(cors({
@@ -56,7 +54,12 @@ app.use(cors({
 // --- 2. SOCKET.IO SETUP ---
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: [
+      process.env.FRONTEND_URL,
+      'https://nayaysarthi-f7b1b.web.app', 
+      'https://nayaysarthi-f7b1b.firebaseapp.com',
+      'http://localhost:5173'
+    ],
     methods: ['GET', 'POST'],
     credentials: true
   },
@@ -69,17 +72,17 @@ mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('MongoDB connected'))
   .catch(err => console.log('MongoDB connection error:', err));
 
-// --- 4. ROUTES (MUST BE AFTER MIDDLEWARE) ---
+// --- 4. ROUTES (ALL FIXED FOR /api PATHS) ---
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
 app.use('/api/auth', authRoutes);
-app.use('/api/cases', caseRoutes);
+app.use('/api/cases', caseRoutes);        // <-- Fixed
 app.use('/api/chat', chatRoutes);
-app.use('/api/chatbot', chatbotRoutes);
+app.use('/api/chatbot', chatbotRoutes);   // <-- Fixed
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/legal-notice', legalNoticeRoutes);
-app.use('/api/notifications', notificationRoutes); // <--- MOVED HERE (Correct Spot)
+app.use('/api/notifications', notificationRoutes);
 
 // --- 5. SOCKET EVENTS ---
 io.on('connection', (socket) => {

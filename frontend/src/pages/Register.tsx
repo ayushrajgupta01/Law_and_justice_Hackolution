@@ -6,7 +6,7 @@ import {
   Mail, Lock, User, AlertCircle, Shield, 
   Phone, Fingerprint, Gavel, Briefcase, 
   CheckCircle2, ArrowRight, Sparkles,
-  Sun, Moon, Eye
+  Sun, Moon, Eye, MapPin // <-- ADDED MapPin HERE
 } from 'lucide-react';
 
 const roles = [
