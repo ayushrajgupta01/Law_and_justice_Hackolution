@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../context/ThemeContext';
 import { 
   Mail, Lock, User, AlertCircle, Shield, 
   Phone, Fingerprint, Gavel, Briefcase, 
   CheckCircle2, ArrowRight, Sparkles,
-  Sun, Moon, Eye, MapPin // <-- ADDED MapPin HERE
+  Sun, Moon, Eye, MapPin
 } from 'lucide-react';
 
 const roles = [
@@ -27,12 +29,91 @@ export const Register: React.FC = () => {
   const [licenseNumber, setLicenseNumber] = useState('');
   const [specialization, setSpecialization] = useState('');
   const [address, setAddress] = useState('');
-  const [coords, setCoords] = useState<{lat: number, lng: number} | null>(null);
+  const [coords, setCoords] = useState<{lat: number, lng: number} | null>({ lat: 20.5937, lng: 78.9629 }); // Default to Center of India
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [role, setRole] = useState('citizen');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  
+  const [searching, setSearching] = useState(false);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
+  const markerRef = useRef<maplibregl.Marker | null>(null);
+  const searchTimeout = useRef<NodeJS.Timeout | null>(null);
+
+  // Initialize MapLibre
+  useEffect(() => {
+    if (!mapContainerRef.current) return;
+
+    mapRef.current = new maplibregl.Map({
+      container: mapContainerRef.current,
+      style: {
+        version: 8,
+        sources: {
+          'osm-tiles': {
+            type: 'raster',
+            tiles: [
+              'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'
+            ],
+            tileSize: 256,
+            attribution: '© OpenStreetMap contributors'
+          }
+        },
+        layers: [
+          {
+            id: 'osm-layer',
+            type: 'raster',
+            source: 'osm-tiles',
+            minzoom: 0,
+            maxzoom: 19
+          }
+        ]
+      },
+      center: [78.9629, 20.5937],
+      zoom: 4
+    });
+
+    mapRef.current.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+    mapRef.current.on('click', (e) => {
+      handleMapLocationSelect(e.lngLat.lat, e.lngLat.lng);
+    });
+
+    return () => {
+      mapRef.current?.remove();
+    };
+  }, []);
+
+  // Update Marker and View when coords change
+  useEffect(() => {
+    if (!mapRef.current || !coords) return;
+
+    // Create or move marker
+    if (!markerRef.current) {
+      markerRef.current = new maplibregl.Marker({ color: '#4f46e5' })
+        .setLngLat([coords.lng, coords.lat])
+        .addTo(mapRef.current);
+    } else {
+      markerRef.current.setLngLat([coords.lng, coords.lat]);
+    }
+
+    // Smoothly fly to location
+    mapRef.current.flyTo({
+      center: [coords.lng, coords.lat],
+      zoom: 15,
+      essential: true
+    });
+  }, [coords]);
+
+  useEffect(() => {
+    return () => {
+      if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    };
+  }, []);
+
   const navigate = useNavigate();
   const { register } = useAuth();
   const { theme, toggleTheme } = useTheme();
@@ -54,40 +135,101 @@ export const Register: React.FC = () => {
     }
   };
 
-  const handleAddressChange = async (val: string) => {
+  const handleMapLocationSelect = async (lat: number, lng: number) => {
+    setCoords({ lat, lng });
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`);
+      const data = await res.json();
+      if (data.display_name) setAddress(data.display_name);
+    } catch (e) {}
+  };
+
+  const handleAddressChange = (val: string) => {
     setAddress(val);
-    if (val.length > 2) {
-      try {
-        const baseUrl = 'https://nominatim.openstreetmap.org/search?format=json&countrycodes=in&addressdetails=1&limit=5';
-        let specificQuery = '';
-        
-        if (role === 'police') specificQuery = `${val} police station`;
-        else if (role === 'lawyer' || role === 'judge') specificQuery = `${val} court`;
+    
+    if (searchTimeout.current) {
+      clearTimeout(searchTimeout.current);
+    }
 
-        const requests = [fetch(`${baseUrl}&q=${encodeURIComponent(val)}`)];
-        if (specificQuery) {
-          requests.unshift(fetch(`${baseUrl}&q=${encodeURIComponent(specificQuery)}`));
+    if (val.trim().length > 2) {
+      setSearching(true);
+      setShowSuggestions(true);
+      searchTimeout.current = setTimeout(async () => {
+        try {
+          const baseUrl = 'https://nominatim.openstreetmap.org/search?format=json&countrycodes=in&addressdetails=1&limit=40';
+          
+          let query = val.toLowerCase();
+          
+          if (role === 'police' && !query.includes('police') && !query.includes('thana') && !query.includes('chowki')) {
+            query = `${val} police thana chowki`;
+          } else if ((role === 'lawyer' || role === 'judge') && !query.includes('court') && !query.includes('nyayalaya')) {
+            query = `${val} court nyayalaya`;
+          } else {
+            query = val;
+          }
+
+          const res = await fetch(`${baseUrl}&q=${encodeURIComponent(query)}`);
+          const data = await res.json();
+          
+          if (!Array.isArray(data)) {
+            setSuggestions([]);
+            return;
+          }
+
+          let filtered = data.filter((item: any) => {
+            if (role === 'citizen') return true;
+
+            const name = (item.display_name || '').toLowerCase();
+            const type = (item.type || '').toLowerCase();
+            const cls = (item.class || '').toLowerCase();
+            const addr = item.address || {};
+            const amenity = (addr.amenity || '').toLowerCase();
+            const office = (addr.office || '').toLowerCase();
+
+            if (role === 'police') {
+              return (
+                name.includes('police') || name.includes('thana') || name.includes('chowki') || 
+                name.includes('ps') || name.includes('p.s') || name.includes('outpost') ||
+                type.includes('police') || cls.includes('police') || 
+                amenity.includes('police') || type.includes('station')
+              );
+            }
+            if (role === 'lawyer' || role === 'judge') {
+              return (
+                name.includes('court') || name.includes('nyayalaya') || name.includes('kacheri') ||
+                name.includes('judic') || name.includes('legal') || name.includes('chamber') ||
+                type.includes('court') || cls.includes('amenity') || 
+                amenity.includes('court') || office.includes('court') || type.includes('justice')
+              );
+            }
+            return true;
+          });
+          
+          if (filtered.length === 0 && role !== 'citizen') {
+            const keywords = role === 'police' ? ['police', 'thana', 'chowki', 'ps'] : ['court', 'nyayalaya', 'legal'];
+            filtered = data.filter((item: any) => {
+              const dname = (item.display_name || '').toLowerCase();
+              return keywords.some(k => dname.includes(k));
+            });
+          }
+
+          setSuggestions(filtered.slice(0, 10));
+        } catch (e) {
+          console.error('Location search failed:', e);
+          setSuggestions([]);
+        } finally {
+          setSearching(false);
         }
-
-        const responses = await Promise.all(requests);
-        const results = await Promise.all(responses.map(r => r.json()));
-        
-        // Flatten and deduplicate by place_id
-        const combined = results.flat();
-        const unique = Array.from(new Map(combined.map(item => [item.place_id, item])).values());
-        
-        setSuggestions(unique);
-        setShowSuggestions(true);
-      } catch (e) {
-        setSuggestions([]);
-      }
+      }, 500);
     } else {
       setSuggestions([]);
       setShowSuggestions(false);
+      setSearching(false);
     }
   };
 
   const selectSuggestion = (s: any) => {
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
     setAddress(s.display_name);
     setCoords({ lat: parseFloat(s.lat), lng: parseFloat(s.lon) });
     setSuggestions([]);
@@ -103,6 +245,11 @@ export const Register: React.FC = () => {
       return;
     }
 
+    if (!coords) {
+      setError('Please select a precise location on the map');
+      return;
+    }
+
     setLoading(true);
   try {
     await register(
@@ -114,7 +261,6 @@ export const Register: React.FC = () => {
       aadhaarNumber,
       badgeNumber,
       licenseNumber,
-      undefined, // courtAssignment removed
       specialization,
       address,
       coords?.lat,
@@ -287,7 +433,7 @@ export const Register: React.FC = () => {
               </div>
             </div>
 
-            {/* Location Protocol - For All Roles */}
+            {/* Location Protocol - Map Integration */}
             <div className={`p-8 rounded-[2rem] border animate-in zoom-in-95 duration-500 ${
               theme === 'light' ? 'bg-indigo-50 border-indigo-100' : 'bg-indigo-600/5 border border-indigo-500/20'
             }`}>
@@ -297,63 +443,72 @@ export const Register: React.FC = () => {
               </div>
               
               <div className="space-y-6">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Detection Method</label>
+                {/* Visual Map Libre */}
+                <div className="w-full h-64 rounded-[1.5rem] overflow-hidden border border-indigo-500/20 shadow-xl relative z-10">
+                  <div ref={mapContainerRef} className="w-full h-full" />
+                  
+                  <div className="absolute bottom-4 right-4 z-[1000]">
                     <button
                       type="button" onClick={handleCaptureLocation}
-                      className={`w-full px-6 py-4 border rounded-2xl outline-none font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-3 transition-all ${
-                        coords 
-                          ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' 
-                          : (theme === 'light' ? 'bg-white border-slate-200 text-indigo-600 hover:border-indigo-600' : 'bg-[#070b14] border-white/10 text-indigo-400 hover:border-indigo-500')
-                      }`}
+                      className="p-3 bg-white text-indigo-600 rounded-xl shadow-2xl hover:bg-indigo-50 transition-all border border-indigo-100"
+                      title="Auto-detect Location"
                     >
-                      {coords ? <CheckCircle2 size={16}/> : <Sparkles size={16}/>}
-                      {coords ? 'LOCATION SECURED' : 'AUTO-DETECT LOCATION'}
+                      <Sparkles size={18}/>
                     </button>
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Manual Node Entry</label>
-                    <div className="relative group">
-                      <MapPin className={`absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 transition-colors ${
-                        theme === 'light' ? 'text-slate-400 group-focus-within:text-indigo-600' : 'text-slate-600 group-focus-within:text-indigo-500'
-                      }`} />
-                      <input
-                        type="text" value={address} onChange={(e) => handleAddressChange(e.target.value)} required
-                        className={`w-full pl-10 pr-4 py-4 border rounded-2xl outline-none font-bold text-xs uppercase tracking-widest ${
-                          theme === 'light' ? 'bg-white border-slate-200 text-slate-900 focus:bg-white focus:border-indigo-600' : 
-                          'bg-[#070b14] border-white/10 text-white focus:bg-white/10 focus:border-indigo-500'
-                        }`}
-                        placeholder={role === 'police' ? 'STATION ADDRESS' : role === 'judge' ? 'COURT ADDRESS' : role === 'lawyer' ? 'OFFICE ADDRESS' : 'RESIDENTIAL ADDRESS'}
-                        onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-                        onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-                      />
+                </div>
 
-                      {/* Suggestions Dropdown */}
-                      {showSuggestions && suggestions.length > 0 && (
-                        <div className={`absolute z-[100] left-0 right-0 top-full mt-2 rounded-2xl border shadow-2xl overflow-hidden max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-300 ${
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Verified Address Node</label>
+                  <div className="relative group">
+                    <MapPin className={`absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 transition-colors ${
+                      theme === 'light' ? 'text-slate-400 group-focus-within:text-indigo-600' : 'text-slate-600 group-focus-within:text-indigo-500'
+                    }`} />
+                    <input
+                      type="text" value={address} onChange={(e) => handleAddressChange(e.target.value)} required
+                      className={`w-full pl-10 pr-4 py-4 border rounded-2xl outline-none font-bold text-xs uppercase tracking-widest ${
+                        theme === 'light' ? 'bg-white border-slate-200 text-slate-900 focus:bg-white focus:border-indigo-600' : 
+                        'bg-[#070b14] border-white/10 text-white focus:bg-white/10 focus:border-indigo-500'
+                      }`}
+                      placeholder="SEARCH OR DROP PIN ON MAP..."
+                      onFocus={() => { if(address.length > 2) setShowSuggestions(true); }}
+                    />
+
+                    {/* Suggestions Dropdown */}
+                    {showSuggestions && (searching || suggestions.length > 0 || (address.length > 2 && !searching && suggestions.length === 0)) && (
+                      <>
+                        <div className="fixed inset-0 z-[100]" onClick={() => setShowSuggestions(false)} />
+                        <div className={`absolute z-[110] left-0 right-0 top-full mt-2 rounded-2xl border shadow-2xl overflow-hidden max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-300 ${
                           theme === 'light' ? 'bg-white border-slate-200 shadow-slate-200/50' : 'bg-[#0f172a] border-white/10 shadow-black/50'
                         }`}>
-                          {suggestions.map((s, idx) => (
-                            <button
-                              key={idx}
-                              type="button"
-                              onClick={() => selectSuggestion(s)}
-                              className={`w-full px-6 py-4 text-left transition-colors border-b last:border-b-0 ${
-                                theme === 'light' 
-                                  ? 'hover:bg-indigo-50 border-slate-100 text-slate-700' 
-                                  : 'hover:bg-indigo-600/10 border-white/5 text-slate-300'
-                              }`}
-                            >
-                              <div className="flex items-start gap-3">
-                                <MapPin size={14} className="mt-0.5 shrink-0 text-indigo-500" />
-                                <span className="font-bold text-[10px] uppercase tracking-wider">{s.display_name}</span>
-                              </div>
-                            </button>
-                          ))}
+                          {searching ? (
+                            <div className="px-6 py-8 text-center">
+                              <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
+                              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 animate-pulse">Scanning Judicial Network...</p>
+                            </div>
+                          ) : suggestions.length > 0 ? (
+                            suggestions.map((s, idx) => (
+                              <button
+                                key={idx} type="button" onClick={() => selectSuggestion(s)}
+                                className={`w-full px-6 py-4 text-left transition-colors border-b last:border-b-0 ${
+                                  theme === 'light' ? 'hover:bg-indigo-50 border-slate-100 text-slate-700' : 'hover:bg-indigo-600/10 border-white/5 text-slate-300'
+                                }`}
+                              >
+                                <div className="flex items-start gap-3">
+                                  <MapPin size={14} className="mt-0.5 shrink-0 text-indigo-500" />
+                                  <span className="font-bold text-[10px] uppercase tracking-wider">{s.display_name}</span>
+                                </div>
+                              </button>
+                            ))
+                          ) : (
+                            <div className="px-6 py-8 text-center">
+                              <AlertCircle size={20} className="mx-auto mb-2 text-orange-500" />
+                              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">No authorized nodes found for your role</p>
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
