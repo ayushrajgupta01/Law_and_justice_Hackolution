@@ -79,16 +79,21 @@ export const Register: React.FC = () => {
     });
 
     mapRef.current.addControl(new maplibregl.NavigationControl(), 'top-right');
-    mapRef.current.addControl(
-      new maplibregl.GeolocateControl({
-        positionOptions: {
-          enableHighAccuracy: true
-        },
-        trackUserLocation: true,
-        showUserLocation: true
-      }),
-      'top-right'
-    );
+    
+    const geolocate = new maplibregl.GeolocateControl({
+      positionOptions: {
+        enableHighAccuracy: true
+      },
+      trackUserLocation: true,
+      showUserLocation: true
+    });
+    
+    mapRef.current.addControl(geolocate, 'top-right');
+
+    // Link built-in geolocate button to address detection
+    geolocate.on('geolocate', (e: any) => {
+      handleMapLocationSelect(e.coords.latitude, e.coords.longitude);
+    });
 
     mapRef.current.on('movestart', () => setIsPanning(true));
     mapRef.current.on('moveend', () => {
@@ -103,6 +108,13 @@ export const Register: React.FC = () => {
       mapRef.current?.flyTo({ center: e.lngLat, zoom: 15 });
     });
 
+    // Proactively try to detect location on mount
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition((pos) => {
+        handleMapLocationSelect(pos.coords.latitude, pos.coords.longitude);
+      });
+    }
+
     return () => {
       mapRef.current?.remove();
     };
@@ -113,7 +125,6 @@ export const Register: React.FC = () => {
     if (!mapRef.current || !coords) return;
     
     // Only fly if the map center is significantly different from coords 
-    // (to avoid infinite loops during panning)
     const center = mapRef.current.getCenter();
     const dist = Math.sqrt(Math.pow(center.lat - coords.lat, 2) + Math.pow(center.lng - coords.lng, 2));
     
