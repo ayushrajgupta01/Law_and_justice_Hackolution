@@ -43,6 +43,8 @@ export const Register: React.FC = () => {
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  const [isPanning, setIsPanning] = useState(false);
+
   // Initialize MapLibre
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -78,6 +80,30 @@ export const Register: React.FC = () => {
     });
 
     mapRef.current.addControl(new maplibregl.NavigationControl(), 'top-right');
+    
+    const geolocate = new maplibregl.GeolocateControl({
+      positionOptions: {
+        enableHighAccuracy: true
+      },
+      trackUserLocation: true,
+      showUserLocation: true
+    });
+    
+    mapRef.current.addControl(geolocate, 'top-right');
+
+    // Link built-in geolocate button to address detection
+    geolocate.on('geolocate', (e: any) => {
+      handleMapLocationSelect(e.coords.latitude, e.coords.longitude);
+    });
+
+    mapRef.current.on('movestart', () => setIsPanning(true));
+    mapRef.current.on('moveend', () => {
+      setIsPanning(false);
+      const center = mapRef.current?.getCenter();
+      if (center) {
+        handleMapLocationSelect(center.lat, center.lng);
+      }
+    });
 
     //  const geolocate = new maplibregl.GeolocateControl({
     //    83   positionOptions: {
@@ -112,33 +138,36 @@ export const Register: React.FC = () => {
     });
 
     mapRef.current.on('click', (e) => {
-      handleMapLocationSelect(e.lngLat.lat, e.lngLat.lng);
+      mapRef.current?.flyTo({ center: e.lngLat, zoom: 15 });
     });
+
+    // Proactively try to detect location on mount
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition((pos) => {
+        handleMapLocationSelect(pos.coords.latitude, pos.coords.longitude);
+      });
+    }
 
     return () => {
       mapRef.current?.remove();
     };
   }, []);
 
-  // Update Marker and View when coords change
+  // Sync coords with map view
   useEffect(() => {
     if (!mapRef.current || !coords) return;
-
-    // Create or move marker
-    if (!markerRef.current) {
-      markerRef.current = new maplibregl.Marker({ color: '#4f46e5' })
-        .setLngLat([coords.lng, coords.lat])
-        .addTo(mapRef.current);
-    } else {
-      markerRef.current.setLngLat([coords.lng, coords.lat]);
+    
+    // Only fly if the map center is significantly different from coords 
+    const center = mapRef.current.getCenter();
+    const dist = Math.sqrt(Math.pow(center.lat - coords.lat, 2) + Math.pow(center.lng - coords.lng, 2));
+    
+    if (dist > 0.0001) {
+      mapRef.current.flyTo({
+        center: [coords.lng, coords.lat],
+        zoom: 15,
+        essential: true
+      });
     }
-
-    // Smoothly fly to location
-    mapRef.current.flyTo({
-      center: [coords.lng, coords.lat],
-      zoom: 15,
-      essential: true
-    });
   }, [coords]);
 
   useEffect(() => {
@@ -449,7 +478,18 @@ export const Register: React.FC = () => {
                 <div className="w-full h-64 rounded-[1.5rem] overflow-hidden border border-indigo-500/20 shadow-xl relative z-10">
                   <div ref={mapContainerRef} className="w-full h-full" />
                   
-                  <div className="absolute bottom-4 right-4 z-[1000]">
+                  {/* Google Style Locator Pin (Fixed in Center) */}
+                  <div className={`absolute inset-0 flex items-center justify-center pointer-events-none z-[1001] transition-transform duration-200 ${isPanning ? '-translate-y-4' : ''}`}>
+                    <div className="relative">
+                      {/* The Pin */}
+                      <div className={`marker-pin ${isPanning ? 'floating' : ''}`}></div>
+                      {/* Ground Shadow/Pulse */}
+                      <div className="marker-shadow"></div>
+                      {!isPanning && <div className="marker-pulse"></div>}
+                    </div>
+                  </div>
+
+                  <div className="absolute bottom-4 right-4 z-[1000] flex flex-col gap-2">
                     <button
                       type="button" onClick={handleCaptureLocation}
                       className="p-3 bg-white text-indigo-600 rounded-xl shadow-2xl hover:bg-indigo-50 transition-all border border-indigo-100 flex items-center justify-center"
@@ -486,6 +526,17 @@ export const Register: React.FC = () => {
                           <div className="px-6 py-8 text-center space-y-3">
                             <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
                             <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 animate-pulse">Scanning Judicial Network...</p>
+                      placeholder="SEARCH OR PAN MAP TO LOCATE..."
+                      onFocus={() => { if(address.length > 2) setShowSuggestions(true); }}
+                    />
+
+                    {/* Suggestions Dropdown */}
+                    {showSuggestions && (searching || suggestions.length > 0 || (address.length > 2 && !searching && suggestions.length === 0)) && (
+                      <div className="absolute z-[110] left-0 right-0 top-full mt-1 rounded-2xl border shadow-2xl overflow-hidden max-h-60 overflow-y-auto bg-inherit">
+                        {searching ? (
+                          <div className={`px-6 py-8 text-center ${theme === 'light' ? 'bg-white' : 'bg-[#0f172a]'}`}>
+                            <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Scanning Judicial Network...</p>
                           </div>
                         ) : suggestions.length > 0 ? (
                           suggestions.map((s, idx) => (
@@ -494,6 +545,9 @@ export const Register: React.FC = () => {
                               onMouseDown={(e) => { e.preventDefault(); selectSuggestion(s); }}
                               className={`w-full px-6 py-4 text-left transition-colors border-b last:border-b-0 ${
                                 theme === 'light' ? 'hover:bg-indigo-50 border-slate-100 text-slate-700' : 'hover:bg-indigo-600/10 border-white/5 text-slate-300'
+                              key={idx} type="button" onClick={() => selectSuggestion(s)}
+                              className={`w-full px-6 py-4 text-left transition-colors border-b last:border-b-0 ${
+                                theme === 'light' ? 'bg-white hover:bg-slate-50 border-slate-100 text-slate-700' : 'bg-[#0f172a] hover:bg-white/5 border-white/5 text-slate-300'
                               }`}
                             >
                               <div className="flex items-start gap-3">
@@ -506,6 +560,10 @@ export const Register: React.FC = () => {
                           <div className="px-6 py-8 text-center space-y-2">
                             <AlertCircle size={20} className="mx-auto text-orange-500" />
                             <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">No matching nodes found in India</p>
+                        ) : (
+                          <div className={`px-6 py-8 text-center ${theme === 'light' ? 'bg-white' : 'bg-[#0f172a]'}`}>
+                            <AlertCircle size={20} className="mx-auto mb-2 text-orange-500" />
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">No authorized nodes found</p>
                           </div>
                         )}
                       </div>
