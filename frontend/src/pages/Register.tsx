@@ -79,8 +79,24 @@ export const Register: React.FC = () => {
 
     mapRef.current.addControl(new maplibregl.NavigationControl(), 'top-right');
 
+    //  const geolocate = new maplibregl.GeolocateControl({
+    //    83   positionOptions: {
+    //    84     enableHighAccuracy: true
+    //    85 },
+    //    86    trackUserLocation: false, // Don't follow them automatically, just point
+    //    87    showUserHeading: true,
+    //    88    showAccuracyCircle: true
+    //    89  });
+    //    90  
+    //    91  mapRef.current.addControl(geolocate, 'top-right');
+    //    92  
+    //    93  geolocate.on('geolocate', (e: any) => {
+    //    94    const { latitude, longitude } = e.coords;
+    //    95    handleMapLocationSelect(latitude, longitude);
+    //    96  });
+    //    97 
     const geolocate = new maplibregl.GeolocateControl({
-      positionOptions: {
+      posiionOptions: {
         enableHighAccuracy: true
       },
       trackUserLocation: false, // Don't follow them automatically, just point
