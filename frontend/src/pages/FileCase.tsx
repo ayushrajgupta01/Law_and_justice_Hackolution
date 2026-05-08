@@ -471,7 +471,7 @@ export const FileCase: React.FC = () => {
                 </div>
               </div>
 
-              {/* Floating Statutory Alert */}
+              {/* Floating Statutory Alert
               {deadline && (
                 <div className="fixed bottom-10 right-10 z-[200] animate-in slide-in-from-right-10 duration-700">
                   <div className="bg-[#0f172a]/95 backdrop-blur-xl border border-amber-500/30 rounded-[2.5rem] p-8 shadow-[0_0_50px_rgba(245,158,11,0.15)] max-w-xs group hover:border-amber-500 transition-all">
@@ -499,12 +499,12 @@ export const FileCase: React.FC = () => {
                       </div>
                       <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-widest text-slate-500">
                         <span>Statutory Limit</span>
-                        <span className="text-white">{deadline.toLocaleDateString('en-GB', { day: '2-digit', month: 'SHORT' })}</span>
+                        <span className="text-white">{deadline.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}</span>
                       </div>
                     </div>
                   </div>
                 </div>
-              )}
+              )} */}
 
               {/* EVIDENCE UPLOAD */}
               <div className="bg-white/5 backdrop-blur-xl rounded-[3rem] border border-white/10 p-8 lg:p-12 space-y-10">
