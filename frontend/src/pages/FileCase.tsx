@@ -1,10 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useNavigate, useLocation } from 'react-router-dom';
+import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import { 
   Shield, EyeOff, Users, FileText, MapPin, Calendar, 
   Info, CheckCircle, BookOpen, UploadCloud, MousePointer2, 
-  ChevronLeft, Sparkles, Gavel, Globe, Activity, AlertCircle 
+  ChevronLeft, Sparkles, Gavel, Globe, Activity, AlertCircle,
+  Navigation
 } from 'lucide-react';
 import { VisualTriage } from '../components/VisualTriage';
 
@@ -21,6 +24,10 @@ export const FileCase: React.FC = () => {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [coords, setCoords] = useState<{lat: number, lng: number} | null>(null);
   
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
+  const markerRef = useRef<maplibregl.Marker | null>(null);
+
   const [formData, setFormData] = useState({
     title: prefillData?.title || '',
     description: prefillData?.description || '', 
@@ -33,6 +40,98 @@ export const FileCase: React.FC = () => {
     bnsSection: prefillData?.bnsSection || '',                  
     aiSuggestedEvidence: prefillData?.requiredEvidence || []    
   });
+
+  // Initialize Map
+  useEffect(() => {
+    if (showTriage || !mapContainerRef.current) return;
+
+    mapRef.current = new maplibregl.Map({
+      container: mapContainerRef.current,
+      style: {
+        version: 8,
+        sources: {
+          'osm-tiles': {
+            type: 'raster',
+            tiles: [
+              'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'
+            ],
+            tileSize: 256,
+            attribution: '© OpenStreetMap contributors'
+          }
+        },
+        layers: [
+          {
+            id: 'osm-layer',
+            type: 'raster',
+            source: 'osm-tiles',
+            minzoom: 0,
+            maxzoom: 19
+          }
+        ]
+      },
+      center: coords ? [coords.lng, coords.lat] : [78.9629, 20.5937],
+      zoom: coords ? 15 : 4
+    });
+
+    mapRef.current.addControl(new maplibregl.NavigationControl(), 'top-right');
+    mapRef.current.addControl(
+      new maplibregl.GeolocateControl({
+        positionOptions: { enableHighAccuracy: true },
+        trackUserLocation: true,
+        showUserLocation: true
+      }),
+      'top-right'
+    );
+
+    mapRef.current.on('click', (e) => {
+      handleMapSelect(e.lngLat.lat, e.lngLat.lng);
+    });
+
+    return () => {
+      mapRef.current?.remove();
+    };
+  }, [showTriage]);
+
+  // Update Marker
+  useEffect(() => {
+    if (!mapRef.current || !coords) return;
+
+    if (!markerRef.current) {
+      markerRef.current = new maplibregl.Marker({ color: '#4f46e5', draggable: true })
+        .setLngLat([coords.lng, coords.lat])
+        .addTo(mapRef.current);
+
+      markerRef.current.on('dragend', () => {
+        const lngLat = markerRef.current?.getLngLat();
+        if (lngLat) handleMapSelect(lngLat.lat, lngLat.lng);
+      });
+    } else {
+      markerRef.current.setLngLat([coords.lng, coords.lat]);
+    }
+
+    mapRef.current.flyTo({ center: [coords.lng, coords.lat], zoom: 15 });
+  }, [coords]);
+
+  const handleMapSelect = async (lat: number, lng: number) => {
+    setCoords({ lat, lng });
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`);
+      const data = await res.json();
+      if (data.display_name) {
+        setFormData(prev => ({ ...prev, location: data.display_name }));
+      }
+    } catch (e) {}
+  };
+
+  const handleLocateMe = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition((pos) => {
+        handleMapSelect(pos.coords.latitude, pos.coords.longitude);
+      });
+    }
+  };
 
   // Automatically try to get GPS on mount for routing and pre-filling address
   useEffect(() => {
@@ -283,6 +382,24 @@ export const FileCase: React.FC = () => {
                       <input name="location" value={formData.location} onChange={handleChange} required className="w-full pl-14 pr-8 py-5 bg-white/5 border border-white/10 rounded-[1.5rem] focus:bg-white focus:text-slate-950 transition-all outline-none font-black text-xs uppercase tracking-widest" placeholder="e.g. MG ROAD, BANGALORE" />
                     </div>
                   </div>
+
+                  {/* INTERACTIVE MAP */}
+                  <div className="space-y-3 md:col-span-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] ml-2">Verify Precise Incident Node</label>
+                    <div className="w-full h-80 rounded-[2rem] overflow-hidden border border-white/10 relative shadow-2xl">
+                      <div ref={mapContainerRef} className="w-full h-full" />
+                      <button 
+                        type="button" 
+                        onClick={handleLocateMe}
+                        className="absolute bottom-6 right-6 z-10 p-4 bg-white text-indigo-600 rounded-2xl shadow-2xl hover:bg-indigo-50 transition-all border border-indigo-100 flex items-center gap-3 group"
+                      >
+                        <Navigation size={18} className="group-hover:rotate-12 transition-transform" />
+                        <span className="text-[10px] font-black uppercase tracking-widest">Locate Incident</span>
+                      </button>
+                    </div>
+                    <p className="text-[9px] font-bold text-slate-500 uppercase tracking-[0.2em] ml-4 mt-2">Drop pin or click to establish geospatial coordinates for the record.</p>
+                  </div>
+
                   <div className="space-y-3">
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] ml-2">Timestamp of Incident</label>
                     <div className="relative">

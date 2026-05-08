@@ -156,38 +156,41 @@ export const CitizenDashboard: React.FC = () => {
     } catch (err) { console.error(err); }
   };
 
-  const handleUpdateRegisteredLocation = () => {
+  const updateLocationInBackend = async (lat: number, lng: number) => {
     setIsUpdatingLocation(true);
+    try {
+      setCurrentCoords({ lat, lng });
+      const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+      const geoData = await geoRes.json();
+      const streetAddress = geoData.display_name || "Unknown Location";
+
+      const res = await fetch(`${getApiUrl()}/users/update-location`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ address: streetAddress, lat, lng })
+      });
+
+      if (res.ok) {
+        setRegisteredAddress(streetAddress);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsUpdatingLocation(false);
+    }
+  };
+
+  const handleUpdateRegisteredLocation = () => {
     if (!navigator.geolocation) {
       alert("Geolocation is not supported by your browser.");
-      setIsUpdatingLocation(false);
       return;
     }
 
     navigator.geolocation.getCurrentPosition(async (pos) => {
-      try {
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        setCurrentCoords({ lat, lng });
-
-        const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
-        const geoData = await geoRes.json();
-        const streetAddress = geoData.display_name || "Unknown Location";
-
-        const res = await fetch(`${getApiUrl()}/users/update-location`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ address: streetAddress, lat, lng })
-        });
-
-        if (res.ok) {
-          setRegisteredAddress(streetAddress);
-          alert("✅ Secure location successfully registered.");
-        }
-      } catch (err) { console.error(err); } finally { setIsUpdatingLocation(false); }
+      await updateLocationInBackend(pos.coords.latitude, pos.coords.longitude);
+      alert("✅ Secure location successfully registered.");
     }, () => {
       alert("Location access denied.");
-      setIsUpdatingLocation(false);
     });
   };
 
@@ -475,7 +478,17 @@ export const CitizenDashboard: React.FC = () => {
             >
               <TileLayer url={theme === 'light' ? "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" : "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"} />
               {currentCoords && (
-                <Marker position={[currentCoords.lat, currentCoords.lng]}>
+                <Marker 
+                  draggable={true}
+                  eventHandlers={{
+                    dragend: (e) => {
+                      const marker = e.target;
+                      const position = marker.getLatLng();
+                      updateLocationInBackend(position.lat, position.lng);
+                    },
+                  }}
+                  position={[currentCoords.lat, currentCoords.lng]}
+                >
                   <Popup>
                     <div className="font-black text-[10px] uppercase">Jurisdiction Center</div>
                     <div className="text-xs">{registeredAddress}</div>
@@ -483,6 +496,25 @@ export const CitizenDashboard: React.FC = () => {
                 </Marker>
               )}
             </MapContainer>
+
+            {/* LOCATE ME BUTTON OVERLAY */}
+            <button 
+              onClick={handleUpdateRegisteredLocation}
+              disabled={isUpdatingLocation}
+              className={`absolute bottom-6 right-6 z-[1000] p-4 rounded-2xl shadow-2xl transition-all border flex items-center gap-3 group ${
+                theme === 'light' ? 'bg-white border-slate-200 text-indigo-600 hover:bg-slate-50' : 
+                'bg-slate-900 border-white/10 text-white hover:bg-slate-800'
+              }`}
+              title="Sync Current GPS"
+            >
+              <div className={`p-2 rounded-xl ${isUpdatingLocation ? 'animate-spin' : 'group-hover:rotate-12 transition-transform'} ${theme === 'light' ? 'bg-indigo-50' : 'bg-white/10'}`}>
+                {isUpdatingLocation ? <Activity size={18} /> : <Navigation size={18} />}
+              </div>
+              <div className="text-left pr-2">
+                <p className="text-[8px] font-black uppercase tracking-[0.2em] opacity-60">Geospatial Sync</p>
+                <p className="text-[10px] font-black uppercase tracking-widest">Locate Me</p>
+              </div>
+            </button>
           </div>
         </div>
 

@@ -42,6 +42,8 @@ export const Register: React.FC = () => {
   const markerRef = useRef<maplibregl.Marker | null>(null);
   const searchTimeout = useRef<NodeJS.Timeout | null>(null);
 
+  const [isPanning, setIsPanning] = useState(false);
+
   // Initialize MapLibre
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -77,9 +79,28 @@ export const Register: React.FC = () => {
     });
 
     mapRef.current.addControl(new maplibregl.NavigationControl(), 'top-right');
+    mapRef.current.addControl(
+      new maplibregl.GeolocateControl({
+        positionOptions: {
+          enableHighAccuracy: true
+        },
+        trackUserLocation: true,
+        showUserLocation: true
+      }),
+      'top-right'
+    );
+
+    mapRef.current.on('movestart', () => setIsPanning(true));
+    mapRef.current.on('moveend', () => {
+      setIsPanning(false);
+      const center = mapRef.current?.getCenter();
+      if (center) {
+        handleMapLocationSelect(center.lat, center.lng);
+      }
+    });
 
     mapRef.current.on('click', (e) => {
-      handleMapLocationSelect(e.lngLat.lat, e.lngLat.lng);
+      mapRef.current?.flyTo({ center: e.lngLat, zoom: 15 });
     });
 
     return () => {
@@ -87,25 +108,22 @@ export const Register: React.FC = () => {
     };
   }, []);
 
-  // Update Marker and View when coords change
+  // Sync coords with map view
   useEffect(() => {
     if (!mapRef.current || !coords) return;
-
-    // Create or move marker
-    if (!markerRef.current) {
-      markerRef.current = new maplibregl.Marker({ color: '#4f46e5' })
-        .setLngLat([coords.lng, coords.lat])
-        .addTo(mapRef.current);
-    } else {
-      markerRef.current.setLngLat([coords.lng, coords.lat]);
+    
+    // Only fly if the map center is significantly different from coords 
+    // (to avoid infinite loops during panning)
+    const center = mapRef.current.getCenter();
+    const dist = Math.sqrt(Math.pow(center.lat - coords.lat, 2) + Math.pow(center.lng - coords.lng, 2));
+    
+    if (dist > 0.0001) {
+      mapRef.current.flyTo({
+        center: [coords.lng, coords.lat],
+        zoom: 15,
+        essential: true
+      });
     }
-
-    // Smoothly fly to location
-    mapRef.current.flyTo({
-      center: [coords.lng, coords.lat],
-      zoom: 15,
-      essential: true
-    });
   }, [coords]);
 
   useEffect(() => {
@@ -447,7 +465,18 @@ export const Register: React.FC = () => {
                 <div className="w-full h-64 rounded-[1.5rem] overflow-hidden border border-indigo-500/20 shadow-xl relative z-10">
                   <div ref={mapContainerRef} className="w-full h-full" />
                   
-                  <div className="absolute bottom-4 right-4 z-[1000]">
+                  {/* Google Style Locator Pin (Fixed in Center) */}
+                  <div className={`absolute inset-0 flex items-center justify-center pointer-events-none z-[1001] transition-transform duration-200 ${isPanning ? '-translate-y-4' : ''}`}>
+                    <div className="relative">
+                      {/* The Pin */}
+                      <div className={`marker-pin ${isPanning ? 'floating' : ''}`}></div>
+                      {/* Ground Shadow/Pulse */}
+                      <div className="marker-shadow"></div>
+                      {!isPanning && <div className="marker-pulse"></div>}
+                    </div>
+                  </div>
+
+                  <div className="absolute bottom-4 right-4 z-[1000] flex flex-col gap-2">
                     <button
                       type="button" onClick={handleCaptureLocation}
                       className="p-3 bg-white text-indigo-600 rounded-xl shadow-2xl hover:bg-indigo-50 transition-all border border-indigo-100"
@@ -470,44 +499,39 @@ export const Register: React.FC = () => {
                         theme === 'light' ? 'bg-white border-slate-200 text-slate-900 focus:bg-white focus:border-indigo-600' : 
                         'bg-[#070b14] border-white/10 text-white focus:bg-white/10 focus:border-indigo-500'
                       }`}
-                      placeholder="SEARCH OR DROP PIN ON MAP..."
+                      placeholder="SEARCH OR PAN MAP TO LOCATE..."
                       onFocus={() => { if(address.length > 2) setShowSuggestions(true); }}
                     />
 
                     {/* Suggestions Dropdown */}
                     {showSuggestions && (searching || suggestions.length > 0 || (address.length > 2 && !searching && suggestions.length === 0)) && (
-                      <>
-                        <div className="fixed inset-0 z-[100]" onClick={() => setShowSuggestions(false)} />
-                        <div className={`absolute z-[110] left-0 right-0 top-full mt-2 rounded-2xl border shadow-2xl overflow-hidden max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-300 ${
-                          theme === 'light' ? 'bg-white border-slate-200 shadow-slate-200/50' : 'bg-[#0f172a] border-white/10 shadow-black/50'
-                        }`}>
-                          {searching ? (
-                            <div className="px-6 py-8 text-center">
-                              <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
-                              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 animate-pulse">Scanning Judicial Network...</p>
-                            </div>
-                          ) : suggestions.length > 0 ? (
-                            suggestions.map((s, idx) => (
-                              <button
-                                key={idx} type="button" onClick={() => selectSuggestion(s)}
-                                className={`w-full px-6 py-4 text-left transition-colors border-b last:border-b-0 ${
-                                  theme === 'light' ? 'hover:bg-indigo-50 border-slate-100 text-slate-700' : 'hover:bg-indigo-600/10 border-white/5 text-slate-300'
-                                }`}
-                              >
-                                <div className="flex items-start gap-3">
-                                  <MapPin size={14} className="mt-0.5 shrink-0 text-indigo-500" />
-                                  <span className="font-bold text-[10px] uppercase tracking-wider">{s.display_name}</span>
-                                </div>
-                              </button>
-                            ))
-                          ) : (
-                            <div className="px-6 py-8 text-center">
-                              <AlertCircle size={20} className="mx-auto mb-2 text-orange-500" />
-                              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">No authorized nodes found for your role</p>
-                            </div>
-                          )}
-                        </div>
-                      </>
+                      <div className="absolute z-[110] left-0 right-0 top-full mt-1 rounded-2xl border shadow-2xl overflow-hidden max-h-60 overflow-y-auto bg-inherit">
+                        {searching ? (
+                          <div className={`px-6 py-8 text-center ${theme === 'light' ? 'bg-white' : 'bg-[#0f172a]'}`}>
+                            <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Scanning Judicial Network...</p>
+                          </div>
+                        ) : suggestions.length > 0 ? (
+                          suggestions.map((s, idx) => (
+                            <button
+                              key={idx} type="button" onClick={() => selectSuggestion(s)}
+                              className={`w-full px-6 py-4 text-left transition-colors border-b last:border-b-0 ${
+                                theme === 'light' ? 'bg-white hover:bg-slate-50 border-slate-100 text-slate-700' : 'bg-[#0f172a] hover:bg-white/5 border-white/5 text-slate-300'
+                              }`}
+                            >
+                              <div className="flex items-start gap-3">
+                                <MapPin size={14} className="mt-0.5 shrink-0 text-indigo-500" />
+                                <span className="font-bold text-[10px] uppercase tracking-wider">{s.display_name}</span>
+                              </div>
+                            </button>
+                          ))
+                        ) : (
+                          <div className={`px-6 py-8 text-center ${theme === 'light' ? 'bg-white' : 'bg-[#0f172a]'}`}>
+                            <AlertCircle size={20} className="mx-auto mb-2 text-orange-500" />
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">No authorized nodes found</p>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>

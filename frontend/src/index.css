@@ -1,3 +1,96 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Custom MapLibre Marker Styles - Google Maps Style */
+.custom-marker {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 1000;
+}
+
+.marker-pin {
+  width: 34px;
+  height: 34px;
+  border-radius: 50% 50% 50% 0;
+  background: #ea4335; /* Google Maps Red */
+  position: absolute;
+  transform: rotate(-45deg);
+  left: 50%;
+  top: 50%;
+  margin: -30px 0 0 -17px;
+  border: 2px solid #b31412;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
+  z-index: 2;
+  transition: all 0.2s ease;
+}
+
+.marker-pin::after {
+  content: '';
+  width: 14px;
+  height: 14px;
+  margin: 8px 0 0 8px;
+  background: #ffffff;
+  position: absolute;
+  border-radius: 50%;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
+}
+
+/* Shadow beneath the pin */
+.marker-shadow {
+  position: absolute;
+  width: 16px;
+  height: 6px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 50%;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1;
+}
+
+.marker-pin.floating {
+  margin-top: -40px;
+  box-shadow: 0 15px 15px rgba(0, 0, 0, 0.3);
+}
+
+.marker-pulse {
+  position: absolute;
+  width: 20px;
+  height: 10px;
+  background-color: rgba(234, 67, 53, 0.3);
+  border-radius: 50%;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  animation: pulse 1.5s infinite;
+  z-index: 1;
+}
+
+@keyframes pulse {
+  0% {
+    transform: translateX(-50%) scale(0.5);
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(-50%) scale(3.5);
+    opacity: 0;
+  }
+}
+
+/* Custom Popup Styles */
+.maplibregl-popup-content {
+  border-radius: 12px !important;
+  padding: 10px 15px !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1) !important;
+  border: 1px solid rgba(226, 232, 240, 0.8) !important;
+}
+
+.maplibregl-popup-close-button {
+  padding: 4px 8px !important;
+  font-size: 16px !important;
+}
