@@ -132,7 +132,7 @@ export const LawyerDashboard: React.FC = () => {
     <div className="flex items-center justify-center min-h-screen bg-[#070b14] dark:bg-[#070b14] light:bg-slate-50 high-contrast:bg-black transition-colors duration-500">
       <div className="flex flex-col items-center gap-6">
         <div className="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin shadow-[0_0_30px_rgba(79,70,229,0.3)]"></div>
-        <p className="text-indigo-400 font-black animate-pulse uppercase tracking-[0.3em] text-[10px]">Accessing Bar Records...</p>
+        <p className="text-indigo-400 font-black uppercase tracking-[0.3em] text-[10px]">Accessing Bar Records...</p>
       </div>
     </div>
   );

@@ -76,6 +76,7 @@ export const CitizenDashboard: React.FC = () => {
   const [personalDocs, setPersonalDocs] = useState<PersonalDocument[]>([]);
   const [selectedNotice, setSelectedNotice] = useState<LegalNotice | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [showSOSTracker, setShowSOSTracker] = useState(false);
   const [isSOSMinimized, setIsSOSMinimized] = useState(false);
@@ -88,7 +89,10 @@ export const CitizenDashboard: React.FC = () => {
   const [sosActiveAddress, setSosActiveAddress] = useState("Locating...");
   const [manualAddress, setManualAddress] = useState("");
 
-  const fetchData = async () => {
+  const fetchData = async (isSilent = false) => {
+    if (!isSilent) setLoading(true);
+    setIsRefreshing(true);
+    
     try {
       const apiUrl = getApiUrl();
       
@@ -120,6 +124,7 @@ export const CitizenDashboard: React.FC = () => {
       console.error("Dashboard Fetch Error:", err);
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -151,7 +156,7 @@ export const CitizenDashboard: React.FC = () => {
       });
       if (res.ok) {
         alert("Advocate Appointed Successfully.");
-        fetchData();
+        fetchData(true);
       }
     } catch (err) { console.error(err); }
   };
@@ -308,7 +313,7 @@ export const CitizenDashboard: React.FC = () => {
     <div className="flex items-center justify-center min-h-screen bg-[#070b14] dark:bg-[#070b14] light:bg-slate-50 high-contrast:bg-black">
       <div className="flex flex-col items-center gap-6">
         <div className="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-        <p className="text-indigo-400 font-black animate-pulse uppercase tracking-[0.3em] text-[10px]">Accessing Justice Records...</p>
+        <p className="text-indigo-400 font-black uppercase tracking-[0.3em] text-[10px]">Accessing Justice Records...</p>
       </div>
     </div>
   );
@@ -368,9 +373,14 @@ export const CitizenDashboard: React.FC = () => {
             <div className={`p-2.5 rounded-xl border transition-all cursor-pointer relative ${theme === 'light' ? 'bg-slate-100 border-slate-200 hover:bg-slate-200' : theme === 'high-contrast' ? 'bg-zinc-900 border-white hover:bg-zinc-800' : 'bg-white/5 border-white/10 hover:bg-white/10'}`}>
                <Notifications />
             </div>
-            <button onClick={handleSOS} className="px-6 py-2.5 bg-red-600 text-white rounded-2xl font-black text-[10px] hover:bg-red-700 transition-all shadow-[0_0_30px_rgba(220,38,38,0.2)] uppercase tracking-[0.2em] animate-pulse border border-red-500/50">Trigger SOS</button>
+            <button onClick={handleSOS} className="px-6 py-2.5 bg-red-600 text-white rounded-2xl font-black text-[10px] hover:bg-red-700 transition-all shadow-[0_0_30px_rgba(220,38,38,0.2)] uppercase tracking-[0.2em] border border-red-500/50">Trigger SOS</button>
           </div>
         </div>
+        {isRefreshing && !loading && (
+          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-indigo-500/20 overflow-hidden">
+            <div className="w-full h-full bg-indigo-500 animate-[loading_2s_ease-in-out_infinite] origin-left"></div>
+          </div>
+        )}
       </nav>
 
       <div className="max-w-[1440px] mx-auto p-6 lg:p-12 space-y-16 pb-32">
