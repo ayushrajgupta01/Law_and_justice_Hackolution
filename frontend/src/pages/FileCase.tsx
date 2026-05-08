@@ -23,10 +23,23 @@ export const FileCase: React.FC = () => {
   const [showTriage, setShowTriage] = useState(!prefillData);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [coords, setCoords] = useState<{lat: number, lng: number} | null>(null);
+  const [isFetchingLocation, setIsFetchingLocation] = useState(false);
+  const [deadline, setDeadline] = useState<Date | null>(null);
   
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markerRef = useRef<maplibregl.Marker | null>(null);
+
+  const timelineRules: Record<string, number> = {
+    civil: 90,
+    criminal: 60,
+    cyber: 45,
+    corporate: 120,
+    commercial: 90,
+    family: 60,
+    property: 90,
+    other: 60
+  };
 
   const [formData, setFormData] = useState({
     title: prefillData?.title || '',
@@ -116,19 +129,27 @@ export const FileCase: React.FC = () => {
 
   const handleMapSelect = async (lat: number, lng: number) => {
     setCoords({ lat, lng });
+    setIsFetchingLocation(true);
     try {
       const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`);
       const data = await res.json();
       if (data.display_name) {
         setFormData(prev => ({ ...prev, location: data.display_name }));
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error("Reverse geocoding failed", e);
+    } finally {
+      setIsFetchingLocation(false);
+    }
   };
 
   const handleLocateMe = () => {
     if (navigator.geolocation) {
+      setIsFetchingLocation(true);
       navigator.geolocation.getCurrentPosition((pos) => {
         handleMapSelect(pos.coords.latitude, pos.coords.longitude);
+      }, () => {
+        setIsFetchingLocation(false);
       });
     }
   };
@@ -159,6 +180,14 @@ export const FileCase: React.FC = () => {
       );
     }
   }, []);
+
+  // Calculate deadline based on BNS rules
+  useEffect(() => {
+    const days = timelineRules[formData.type] || 60;
+    const date = new Date();
+    date.setDate(date.getDate() + days);
+    setDeadline(date);
+  }, [formData.type]);
 
   const handleTriageSelect = (category: string, title: string) => {
     setFormData(prev => ({
@@ -377,6 +406,33 @@ export const FileCase: React.FC = () => {
                   </div>
                   <div className="space-y-3">
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] ml-2">Geo-Location</label>
+                    
+                    {/* Auto-fetch Section for Citizens */}
+                    <div className="p-6 bg-indigo-500/5 border border-indigo-500/10 rounded-[1.5rem] mb-4 flex items-center justify-between group hover:border-indigo-500/30 transition-all">
+                      <div className="flex items-center gap-4">
+                        <div className="p-3 bg-indigo-500/10 text-indigo-400 rounded-xl">
+                          <Sparkles size={18} className="animate-pulse" />
+                        </div>
+                        <div>
+                          <h4 className="text-[10px] font-black text-white uppercase tracking-widest">Auto-Fetch Incident Node</h4>
+                          <p className="text-[9px] font-bold text-slate-500 uppercase mt-0.5">Use GPS to synchronize the exact coordinates</p>
+                        </div>
+                      </div>
+                      <button 
+                        type="button"
+                        onClick={handleLocateMe}
+                        disabled={isFetchingLocation}
+                        className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black text-[9px] uppercase tracking-widest shadow-lg shadow-indigo-500/20 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                      >
+                        {isFetchingLocation ? (
+                          <>
+                            <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                            SYNCING...
+                          </>
+                        ) : 'Fetch Now'}
+                      </button>
+                    </div>
+
                     <div className="relative">
                       <MapPin size={18} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-500" />
                       <input name="location" value={formData.location} onChange={handleChange} required className="w-full pl-14 pr-8 py-5 bg-white/5 border border-white/10 rounded-[1.5rem] focus:bg-white focus:text-slate-950 transition-all outline-none font-black text-xs uppercase tracking-widest" placeholder="e.g. MG ROAD, BANGALORE" />
@@ -414,6 +470,41 @@ export const FileCase: React.FC = () => {
                   <textarea name="description" value={formData.description} onChange={handleChange} required rows={8} className="w-full p-8 bg-white/5 border border-white/10 rounded-[2rem] focus:bg-white focus:text-slate-950 transition-all outline-none font-medium text-sm leading-relaxed" placeholder="Detailed factual description..." />
                 </div>
               </div>
+
+              {/* Floating Statutory Alert */}
+              {deadline && (
+                <div className="fixed bottom-10 right-10 z-[200] animate-in slide-in-from-right-10 duration-700">
+                  <div className="bg-[#0f172a]/95 backdrop-blur-xl border border-amber-500/30 rounded-[2.5rem] p-8 shadow-[0_0_50px_rgba(245,158,11,0.15)] max-w-xs group hover:border-amber-500 transition-all">
+                    <div className="flex items-center gap-5 mb-6">
+                      <div className="p-4 bg-amber-500/10 text-amber-500 rounded-2xl">
+                        <AlertCircle size={24} className="animate-pulse" />
+                      </div>
+                      <div>
+                        <h4 className="text-[10px] font-black text-white uppercase tracking-[0.2em]">BNSS Compliance</h4>
+                        <p className="text-[14px] font-black text-amber-500 uppercase tracking-tight">{formData.type} Window</p>
+                      </div>
+                    </div>
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-end">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Resolution Timer</span>
+                        <span className="text-3xl font-black text-white tracking-tighter">
+                          {Math.ceil((deadline.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))}D
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-amber-500 transition-all duration-1000 animate-pulse" 
+                          style={{ width: `${(timelineRules[formData.type] / 120) * 100}%` }}
+                        ></div>
+                      </div>
+                      <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-widest text-slate-500">
+                        <span>Statutory Limit</span>
+                        <span className="text-white">{deadline.toLocaleDateString('en-GB', { day: '2-digit', month: 'SHORT' })}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* EVIDENCE UPLOAD */}
               <div className="bg-white/5 backdrop-blur-xl rounded-[3rem] border border-white/10 p-8 lg:p-12 space-y-10">
